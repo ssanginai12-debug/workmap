@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>업무맵 Cloud MVP - 로그인/초대/DB/실시간 동기화</title>
+  <meta name="description" content="테이블 하나를 원본으로 마인드맵, 칸반, 타임라인, 캘린더가 자동 동기화되는 웹앱 MVP" />
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <div class="app-mark">WM</div>
+        <div>
+          <div class="eyebrow">Table-driven Work Map</div>
+          <input id="boardTitle" class="board-title-input" aria-label="보드명" />
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span id="cloudStatus" class="save-status">로컬 모드</span>
+        <span id="userEmail" class="save-status"></span>
+        <button class="ghost-btn" id="signOutBtn" hidden>로그아웃</button>
+        <span id="saveStatus" class="save-status">저장됨</span>
+        <button class="ghost-btn" id="resetDemoBtn" title="샘플 데이터로 다시 시작">샘플 복원</button>
+        <button class="ghost-btn" id="exportBtn">JSON 내보내기</button>
+        <label class="ghost-btn file-label" for="importFile">JSON 가져오기</label>
+        <input id="importFile" type="file" accept="application/json" hidden />
+        <button class="primary-btn" id="shareBtn">초대/공유</button>
+      </div>
+    </header>
+
+    <section class="view-tabs" role="tablist" aria-label="보기 전환">
+      <button class="tab active" data-view="table">테이블</button>
+      <button class="tab" data-view="mindmap">마인드맵</button>
+      <button class="tab" data-view="kanban">칸반</button>
+      <button class="tab" data-view="timeline">타임라인</button>
+      <button class="tab" data-view="calendar">캘린더</button>
+    </section>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <div class="panel">
+          <h2>보드 요약</h2>
+          <div id="summaryCards" class="summary-grid"></div>
+        </div>
+        <div class="panel">
+          <h2>분류</h2>
+          <div id="categoryList" class="category-list"></div>
+        </div>
+        <div class="panel help-panel">
+          <h2>동기화 원리</h2>
+          <p>모든 화면은 <b>같은 업무 테이블</b>을 바라봅니다.</p>
+          <p>테이블에서 날짜를 바꾸면 타임라인/캘린더가 바뀌고, 칸반에서 카드를 옮기면 상태가 바뀝니다.</p>
+        </div>
+      </aside>
+
+      <section class="workspace">
+        <div id="viewHeader" class="view-header"></div>
+        <div id="viewRoot" class="view-root"></div>
+      </section>
+    </main>
+  </div>
+
+  <aside id="drawer" class="drawer" aria-hidden="true">
+    <div class="drawer-header">
+      <div>
+        <div class="eyebrow">업무 상세</div>
+        <h2 id="drawerTitle">업무</h2>
+      </div>
+      <button class="icon-btn" id="closeDrawer" aria-label="닫기">×</button>
+    </div>
+    <div id="drawerBody" class="drawer-body"></div>
+  </aside>
+
+  <div id="modalBackdrop" class="modal-backdrop" hidden></div>
+  <section id="shareModal" class="modal" hidden aria-modal="true" role="dialog">
+    <div class="modal-header">
+      <div>
+        <div class="eyebrow">초대/공유</div>
+        <h2>팀원과 보드 공유</h2>
+      </div>
+      <button class="icon-btn" id="closeShareModal" aria-label="닫기">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="share-note" id="shareNote">
+        <b>Cloud 모드에서는 초대한 이메일 계정만 이 보드에 접근할 수 있습니다.</b><br>
+        팀원이 같은 이메일로 로그인하면 보드가 자동으로 보입니다. 실제 초대 메일 발송은 Edge Function/메일 서비스를 붙이면 됩니다.
+      </div>
+      <div class="invite-row">
+        <input id="inviteEmail" type="email" placeholder="team@example.com" />
+        <select id="inviteRole">
+          <option value="편집 가능">편집 가능</option>
+          <option value="보기 전용">보기 전용</option>
+          <option value="관리자">관리자</option>
+        </select>
+        <button class="primary-btn" id="addMemberBtn">초대 목록 추가</button>
+      </div>
+      <div id="memberList" class="member-list"></div>
+      <div class="share-link-block">
+        <button class="primary-btn" id="makeShareLinkBtn">현재 보드 공유 링크 만들기</button>
+        <textarea id="shareUrl" readonly placeholder="공유 링크가 여기에 생성됩니다."></textarea>
+        <button class="ghost-btn" id="copyShareLinkBtn">링크 복사</button>
+      </div>
+    </div>
+  </section>
+
+  <template id="emptyStateTemplate">
+    <div class="empty-state">
+      <div class="empty-icon">＋</div>
+      <h3>아직 업무가 없습니다.</h3>
+      <p>테이블에서 업무를 추가하면 마인드맵, 칸반, 타임라인, 캘린더가 자동으로 생성됩니다.</p>
+      <button class="primary-btn" data-action="add-task">업무 추가</button>
+    </div>
+  </template>
+
+  <section id="authScreen" class="auth-screen" hidden>
+    <div class="auth-card">
+      <div class="app-mark auth-mark">WM</div>
+      <div class="eyebrow">WorkMap Cloud</div>
+      <h1>로그인</h1>
+      <p>Supabase 설정을 완료하면 로그인, 팀원 초대, DB 저장, 실시간 동기화가 활성화됩니다.</p>
+      <label>이메일<input id="authEmail" type="email" placeholder="name@company.com" autocomplete="email"></label>
+      <label>비밀번호<input id="authPassword" type="password" placeholder="8자 이상" autocomplete="current-password"></label>
+      <div class="auth-actions">
+        <button class="primary-btn" id="loginBtn">로그인</button>
+        <button class="ghost-btn" id="signupBtn">회원가입</button>
+      </div>
+      <button class="ghost-btn full-btn" id="magicLinkBtn">비밀번호 없이 메일 링크로 로그인</button>
+      <p id="authMessage" class="auth-message"></p>
+      <div class="share-note config-note">
+        <b>GitHub Pages 사용 가능</b><br>
+        단, GitHub는 정적 파일 호스팅용이고 DB/로그인/실시간 동기화는 Supabase가 담당합니다.
+      </div>
+    </div>
+  </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

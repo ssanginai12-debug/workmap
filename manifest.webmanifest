@@ -1,0 +1,9 @@
+{
+  "name": "업무맵 MVP",
+  "short_name": "업무맵",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#2f5cff",
+  "description": "테이블 하나를 기준으로 마인드맵, 칸반, 타임라인, 캘린더가 자동 동기화되는 웹앱 MVP"
+}
