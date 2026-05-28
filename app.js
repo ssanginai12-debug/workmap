@@ -793,7 +793,7 @@
       createNewTable(els.newTableLabel?.value);
     });
     els.tableSelect?.addEventListener('change', switchTable);
-    $('#resetDemoBtn').addEventListener('click', async () => {
+    $('#resetDemoBtn')?.addEventListener('click', async () => {
       if (!confirm('현재 데이터를 샘플 데이터로 덮어쓸까요?')) return;
       if (CLOUD_ENABLED && currentBoardId) {
         await resetCloudDemo();
@@ -894,7 +894,7 @@
   async function switchProjectById(tableId) {
     if (!tableId) return;
     closeDrawer();
-    closeProjectListModal(false);
+    closeProjectListModal();
     if (CLOUD_ENABLED && currentUser) {
       try {
         els.saveStatus.textContent = '프로젝트 전환 중…';
