@@ -1,4 +1,4 @@
-const CACHE_NAME = 'workmap-mvp-v4-features';
+const CACHE_NAME = 'workmap-mvp-v5-projects';
 const FILES = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {

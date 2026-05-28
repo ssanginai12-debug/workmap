@@ -262,17 +262,25 @@
     let preferredBoardId = urlBoardId || localStorage.getItem(CLOUD_BOARD_KEY) || '';
     let board = null;
     if (preferredBoardId) {
-      const { data } = await supabaseClient.from('boards').select('*').eq('id', preferredBoardId).maybeSingle();
+      const { data } = await supabaseClient.from('boards').select('id,title,updated_at').eq('id', preferredBoardId).maybeSingle();
       board = data || null;
     }
+
+    const { data: boards, error: boardsError } = await supabaseClient
+      .from('boards')
+      .select('id,title,updated_at')
+      .order('updated_at', { ascending: false });
+    if (boardsError) throw boardsError;
+    availableCloudBoards = boards || [];
     if (!board) {
-      const { data: boards, error } = await supabaseClient.from('boards').select('*').order('updated_at', { ascending: false });
-      if (error) throw error;
-      availableCloudBoards = boards || [];
       board = boards?.[0] || null;
     }
     if (!board) {
-      const { data: created, error } = await supabaseClient.from('boards').insert({ title: demoState().boardName }).select('*').single();
+      const { data: created, error } = await supabaseClient
+        .from('boards')
+        .insert({ title: demoState().boardName })
+        .select('id,title,updated_at')
+        .single();
       if (error) throw error;
       board = created;
       availableCloudBoards = [created];
@@ -787,14 +795,16 @@
         els.saveStatus.textContent = '새 프로젝트 생성 중…';
         const { data: board, error } = await supabaseClient
           .from('boards')
-          .insert({ title: tableLabel, settings: { statuses: DEFAULT_STATUSES.slice(), mindPositions: {}, mindZoom: 1 } })
-          .select('*')
+          .insert({ title: tableLabel })
+          .select('id,title,updated_at')
           .single();
         if (error) throw error;
         currentBoardId = board.id;
         availableCloudBoards = [board, ...availableCloudBoards.filter((item) => item.id !== board.id)];
         localStorage.setItem(CLOUD_BOARD_KEY, currentBoardId);
         state = blankState(tableLabel);
+        saveLocalBoardSettings(currentBoardId, getBoardSettings());
+        queueBoardSettingsSave(true);
         await loadCloudBoard(currentBoardId);
         await subscribeToBoardRealtime();
         els.saveStatus.textContent = '새 프로젝트 생성됨';
@@ -865,8 +875,8 @@
         if (!availableCloudBoards.length) {
           const { data: created, error: createError } = await supabaseClient
             .from('boards')
-            .insert({ title: '새 프로젝트', settings: { statuses: DEFAULT_STATUSES.slice(), mindPositions: {}, mindZoom: 1 } })
-            .select('*')
+            .insert({ title: '새 프로젝트' })
+            .select('id,title,updated_at')
             .single();
           if (createError) throw createError;
           availableCloudBoards = [created];
