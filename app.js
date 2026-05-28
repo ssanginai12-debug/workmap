@@ -257,6 +257,29 @@
     if (els.signOutBtn) els.signOutBtn.hidden = !currentUser;
   }
 
+  async function createCloudBoard(title) {
+    const payload = { title: normalizeProjectName(title) };
+    if (currentUser?.id) payload.owner_id = currentUser.id;
+
+    let result = await supabaseClient
+      .from('boards')
+      .insert(payload)
+      .select('id,title,updated_at')
+      .single();
+
+    const message = String(result.error?.message || '').toLowerCase();
+    if (result.error && payload.owner_id && (message.includes('owner_id') || message.includes('schema cache') || message.includes('column'))) {
+      result = await supabaseClient
+        .from('boards')
+        .insert({ title: payload.title })
+        .select('id,title,updated_at')
+        .single();
+    }
+
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
   async function loadOrCreateCloudBoard() {
     const urlBoardId = new URLSearchParams(location.search).get('board');
     let preferredBoardId = urlBoardId || localStorage.getItem(CLOUD_BOARD_KEY) || '';
@@ -276,15 +299,14 @@
       board = boards?.[0] || null;
     }
     if (!board) {
-      const { data: created, error } = await supabaseClient
-        .from('boards')
-        .insert({ title: demoState().boardName })
-        .select('id,title,updated_at')
-        .single();
-      if (error) throw error;
+      const created = await createCloudBoard(demoState().boardName);
       board = created;
       availableCloudBoards = [created];
-      await seedDemoTasks(board.id);
+      try {
+        await seedDemoTasks(board.id);
+      } catch (seedError) {
+        console.warn('샘플 업무 생성 건너뜀:', seedError.message || seedError);
+      }
     }
     if (board && !availableCloudBoards.some((item) => item.id === board.id)) {
       availableCloudBoards.unshift(board);
@@ -793,12 +815,7 @@
     if (CLOUD_ENABLED && currentUser) {
       try {
         els.saveStatus.textContent = '새 프로젝트 생성 중…';
-        const { data: board, error } = await supabaseClient
-          .from('boards')
-          .insert({ title: tableLabel })
-          .select('id,title,updated_at')
-          .single();
-        if (error) throw error;
+        const board = await createCloudBoard(tableLabel);
         currentBoardId = board.id;
         availableCloudBoards = [board, ...availableCloudBoards.filter((item) => item.id !== board.id)];
         localStorage.setItem(CLOUD_BOARD_KEY, currentBoardId);
@@ -873,12 +890,7 @@
         availableCloudBoards = availableCloudBoards.filter((board) => board.id !== deletingId);
 
         if (!availableCloudBoards.length) {
-          const { data: created, error: createError } = await supabaseClient
-            .from('boards')
-            .insert({ title: '새 프로젝트' })
-            .select('id,title,updated_at')
-            .single();
-          if (createError) throw createError;
+          const created = await createCloudBoard('새 프로젝트');
           availableCloudBoards = [created];
         }
 
