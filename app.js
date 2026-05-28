@@ -147,8 +147,18 @@
     const request = signup
       ? supabaseClient.auth.signUp({ email, password })
       : supabaseClient.auth.signInWithPassword({ email, password });
-    const { error } = await request;
+    const { data, error } = await request;
     if (error) return setAuthMessage(error.message, true);
+
+    // Supabase 설정에 따라 회원가입 직후 또는 로그인 직후 세션이 바로 생길 수 있습니다.
+    // 이 경우 Auth 상태 변경 이벤트를 기다리지 않고 곧바로 앱 화면으로 전환합니다.
+    if (data?.session?.user) {
+      currentUser = data.session.user;
+      setAuthMessage('로그인 완료. 보드를 불러오는 중…');
+      await bootSignedInUser();
+      return;
+    }
+
     setAuthMessage(signup ? '회원가입 완료. 메일 확인이 필요한 설정이면 확인 후 로그인하세요.' : '로그인 완료.');
   }
 
@@ -177,6 +187,8 @@
   function showAuthScreen(show) {
     if (!els.authScreen) return;
     els.authScreen.hidden = !show;
+    // 일부 브라우저/스타일 조합에서 hidden 속성이 .auth-screen display:grid에 덮이는 문제를 방지합니다.
+    els.authScreen.style.display = show ? 'grid' : 'none';
     $('#app').style.display = show ? 'none' : '';
   }
 

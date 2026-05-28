@@ -32,6 +32,7 @@ body {
     radial-gradient(circle at top left, rgba(47, 92, 255, 0.10), transparent 35vw),
     linear-gradient(180deg, #fbfcff 0%, var(--bg) 100%);
 }
+[hidden] { display: none !important; }
 button, input, select, textarea { font-family: inherit; }
 button { cursor: pointer; }
 
