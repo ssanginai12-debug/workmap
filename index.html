@@ -24,6 +24,7 @@
         <button class="ghost-btn" id="signOutBtn" hidden>로그아웃</button>
         <span id="saveStatus" class="save-status">저장됨</span>
         <select id="tableSelect" class="project-select" aria-label="프로젝트 선택"></select>
+        <button class="ghost-btn" id="projectListBtn" title="프로젝트 목록 보기">프로젝트 목록</button>
         <button class="ghost-btn" id="newTableBtn" title="프로젝트명을 입력해 새 프로젝트 생성">신규 프로젝트</button>
         <button class="ghost-btn danger-soft-btn" id="deleteProjectBtn" title="현재 프로젝트 삭제">프로젝트 삭제</button>
         <button class="ghost-btn" id="resetDemoBtn" title="샘플 데이터로 다시 시작">샘플 복원</button>
@@ -128,6 +129,22 @@
     </div>
   </section>
 
+  <section id="projectListModal" class="modal compact-modal" hidden aria-modal="true" role="dialog" aria-labelledby="projectListTitle">
+    <div class="modal-header">
+      <div>
+        <div class="eyebrow">프로젝트</div>
+        <h2 id="projectListTitle">프로젝트 목록</h2>
+      </div>
+      <button class="icon-btn" id="closeProjectListModal" aria-label="닫기">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="projectListBody" class="project-list-body"></div>
+      <div class="modal-actions">
+        <button type="button" class="ghost-btn" id="projectListNewBtn">신규 프로젝트</button>
+      </div>
+    </div>
+  </section>
+
   <template id="emptyStateTemplate">
     <div class="empty-state">
       <div class="empty-icon">＋</div>
@@ -145,6 +162,7 @@
       <p>Supabase 설정을 완료하면 로그인, 팀원 초대, DB 저장, 실시간 동기화가 활성화됩니다.</p>
       <label>이메일<input id="authEmail" type="email" placeholder="name@company.com" autocomplete="email"></label>
       <label>비밀번호<input id="authPassword" type="password" placeholder="8자 이상" autocomplete="current-password"></label>
+      <label class="remember-row"><input id="rememberEmail" type="checkbox"> <span>ID 기억하기</span></label>
       <div class="auth-actions">
         <button class="primary-btn" id="loginBtn">로그인</button>
         <button class="ghost-btn" id="signupBtn">회원가입</button>

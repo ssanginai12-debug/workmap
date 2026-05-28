@@ -5,6 +5,9 @@
   const CLOUD_VIEW_KEY = 'workmap_cloud_view_v1';
   const CLOUD_BOARD_KEY = 'workmap_cloud_board_v1';
   const CLOUD_BOARD_SETTINGS_FALLBACK_KEY = 'workmap_cloud_board_settings_v2';
+  const REMEMBER_EMAIL_KEY = 'workmap_remember_email_v1';
+  const ADD_CATEGORY_VALUE = '__workmap_add_category__';
+  const ADD_STATUS_VALUE = '__workmap_add_status__';
   const CLOUD_CONFIG = window.WORKMAP_SUPABASE || {};
   const CLOUD_ENABLED = Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.anonKey && window.supabase);
   const supabaseClient = CLOUD_ENABLED ? window.supabase.createClient(CLOUD_CONFIG.url, CLOUD_CONFIG.anonKey) : null;
@@ -106,14 +109,18 @@
     authEmail: $('#authEmail'),
     authPassword: $('#authPassword'),
     authMessage: $('#authMessage'),
+    rememberEmail: $('#rememberEmail'),
     tableSelect: $('#tableSelect'),
     newTableModal: $('#newTableModal'),
-    newTableLabel: $('#newTableLabel')
+    newTableLabel: $('#newTableLabel'),
+    projectListModal: $('#projectListModal'),
+    projectListBody: $('#projectListBody')
   };
 
   init();
 
   async function init() {
+    hydrateRememberedEmail();
     bindGlobalEvents();
     bindAuthEvents();
     renderCloudStatus();
@@ -130,6 +137,13 @@
 
   function bindAuthEvents() {
     if (!CLOUD_ENABLED) return;
+    els.rememberEmail?.addEventListener('change', () => {
+      if (els.rememberEmail.checked) persistRememberedEmail(els.authEmail.value.trim());
+      else localStorage.removeItem(REMEMBER_EMAIL_KEY);
+    });
+    els.authEmail?.addEventListener('input', () => {
+      if (els.rememberEmail?.checked) persistRememberedEmail(els.authEmail.value.trim());
+    });
     $('#loginBtn')?.addEventListener('click', () => signInWithPassword(false));
     $('#signupBtn')?.addEventListener('click', () => signInWithPassword(true));
     $('#magicLinkBtn')?.addEventListener('click', signInWithMagicLink);
@@ -195,6 +209,7 @@
     const email = els.authEmail.value.trim();
     const password = els.authPassword.value;
     if (!email || !password) return setAuthMessage('이메일과 비밀번호를 입력하세요.', true);
+    persistRememberedEmail(email);
     setAuthMessage(signup ? '회원가입 중…' : '로그인 중…');
     const request = signup
       ? supabaseClient.auth.signUp({ email, password })
@@ -217,6 +232,7 @@
   async function signInWithMagicLink() {
     const email = els.authEmail.value.trim();
     if (!email) return setAuthMessage('이메일을 입력하세요.', true);
+    persistRememberedEmail(email);
     setAuthMessage('로그인 링크를 보내는 중…');
     const { error } = await supabaseClient.auth.signInWithOtp({
       email,
@@ -234,6 +250,20 @@
     if (!els.authMessage) return;
     els.authMessage.textContent = message || '';
     els.authMessage.classList.toggle('danger-text', Boolean(isError));
+  }
+
+  function hydrateRememberedEmail() {
+    const remembered = localStorage.getItem(REMEMBER_EMAIL_KEY) || '';
+    if (els.authEmail && remembered) els.authEmail.value = remembered;
+    if (els.rememberEmail) els.rememberEmail.checked = Boolean(remembered);
+  }
+
+  function persistRememberedEmail(email) {
+    if (!els.rememberEmail?.checked) {
+      localStorage.removeItem(REMEMBER_EMAIL_KEY);
+      return;
+    }
+    if (email) localStorage.setItem(REMEMBER_EMAIL_KEY, email);
   }
 
   function showAuthScreen(show) {
@@ -748,6 +778,12 @@
     $('#copyShareLinkBtn').addEventListener('click', copyShareLink);
     $('#exportBtn').addEventListener('click', exportJson);
     $('#importFile').addEventListener('change', importJson);
+    $('#projectListBtn')?.addEventListener('click', openProjectListModal);
+    $('#closeProjectListModal')?.addEventListener('click', closeProjectListModal);
+    $('#projectListNewBtn')?.addEventListener('click', () => {
+      closeProjectListModal();
+      openNewTableModal();
+    });
     $('#newTableBtn')?.addEventListener('click', openNewTableModal);
     $('#deleteProjectBtn')?.addEventListener('click', deleteCurrentProject);
     $('#closeNewTableModal')?.addEventListener('click', closeNewTableModal);
@@ -779,6 +815,11 @@
       const addStatusButton = e.target.closest('[data-action="add-status"]');
       if (addStatusButton) {
         addKanbanColumn();
+        return;
+      }
+      const openProjectButton = e.target.closest('[data-project-open]');
+      if (openProjectButton) {
+        switchProjectById(openProjectButton.dataset.projectOpen);
         return;
       }
       const resetMindButton = e.target.closest('[data-action="reset-mindmap-layout"]');
@@ -847,7 +888,13 @@
   async function switchTable(e) {
     const tableId = e.target.value;
     if (!tableId) return;
+    await switchProjectById(tableId);
+  }
+
+  async function switchProjectById(tableId) {
+    if (!tableId) return;
     closeDrawer();
+    closeProjectListModal(false);
     if (CLOUD_ENABLED && currentUser) {
       try {
         els.saveStatus.textContent = '프로젝트 전환 중…';
@@ -935,6 +982,7 @@
     renderCategoryList();
     renderCurrentView();
     renderDrawer();
+    if (els.projectListModal && !els.projectListModal.hidden) renderProjectListModal();
   }
 
   function renderTableSelect() {
@@ -956,6 +1004,24 @@
     els.tableSelect.innerHTML = options
       .map((item) => `<option value="${escapeAttr(item.id)}" ${item.id === currentId ? 'selected' : ''}>${escapeHtml(item.label)}</option>`)
       .join('');
+  }
+
+  function getProjectOptions() {
+    return CLOUD_ENABLED && currentUser
+      ? availableCloudBoards.map((board) => ({ id: board.id, label: normalizeProjectName(board.title) }))
+      : Object.entries(getLocalTables()).map(([id, table]) => ({ id, label: normalizeProjectName(table.boardName) }));
+  }
+
+  function renderProjectListModal() {
+    if (!els.projectListBody) return;
+    const currentId = CLOUD_ENABLED && currentUser ? currentBoardId : currentLocalTableId;
+    const options = getProjectOptions();
+    els.projectListBody.innerHTML = options.length ? options.map((project) => `
+      <button class="project-list-item ${project.id === currentId ? 'active' : ''}" data-project-open="${escapeAttr(project.id)}">
+        <span>${escapeHtml(project.label)}</span>
+        <small>${project.id === currentId ? '현재 프로젝트' : '열기'}</small>
+      </button>
+    `).join('') : '<p class="muted">아직 프로젝트가 없습니다.</p>';
   }
 
   function renderCurrentView() {
@@ -1126,13 +1192,13 @@
     $$('[data-field]', root).forEach((el) => {
       const eventName = el.tagName === 'SELECT' || el.type === 'date' ? 'change' : 'input';
       el.addEventListener(eventName, (e) => {
-        updateTask(e.target.dataset.id, e.target.dataset.field, e.target.value, false);
+        handleEditableFieldChange(e.target.dataset.id, e.target.dataset.field, e.target.value, false);
       });
     });
   }
 
   function categoriesWithCurrent(current) {
-    return Array.from(new Set([...CATEGORIES, current].filter(Boolean)));
+    return Array.from(new Set([...CATEGORIES, ...state.tasks.map((t) => t.category), current].filter(Boolean)));
   }
 
   function statusesWithCurrent(current) {
@@ -1140,7 +1206,12 @@
   }
 
   function selectHtml(field, id, options, current) {
-    return `<select class="data-select" data-field="${escapeAttr(field)}" data-id="${escapeAttr(id)}">${options.map((opt) => `<option value="${escapeAttr(opt)}" ${opt === current ? 'selected' : ''}>${escapeHtml(opt)}</option>`).join('')}</select>`;
+    const extra = field === 'category'
+      ? `<option value="${ADD_CATEGORY_VALUE}">+ 새 분류 추가...</option>`
+      : field === 'status'
+        ? `<option value="${ADD_STATUS_VALUE}">+ 새 상태 추가...</option>`
+        : '';
+    return `<select class="data-select" data-field="${escapeAttr(field)}" data-id="${escapeAttr(id)}">${options.map((opt) => `<option value="${escapeAttr(opt)}" ${opt === current ? 'selected' : ''}>${escapeHtml(opt)}</option>`).join('')}${extra}</select>`;
   }
 
   function markSelected(optionsHtml, selectedValue) {
@@ -1926,7 +1997,7 @@
       const eventName = el.tagName === 'SELECT' || el.type === 'date' ? 'change' : 'input';
       el.addEventListener(eventName, (e) => {
         const shouldRerender = el.tagName === 'SELECT' || el.type === 'date';
-        updateTask(t.id, e.target.dataset.drawerField, e.target.value, shouldRerender);
+        handleEditableFieldChange(t.id, e.target.dataset.drawerField, e.target.value, shouldRerender);
       });
     });
     $('[data-action="add-child-task"]', els.drawerBody)?.addEventListener('click', async (e) => {
@@ -1942,7 +2013,12 @@
   }
 
   function drawerSelect(field, options, current) {
-    return `<select data-drawer-field="${escapeAttr(field)}">${options.map((opt) => `<option value="${escapeAttr(opt)}" ${opt === current ? 'selected' : ''}>${escapeHtml(opt)}</option>`).join('')}</select>`;
+    const extra = field === 'category'
+      ? `<option value="${ADD_CATEGORY_VALUE}">+ 새 분류 추가...</option>`
+      : field === 'status'
+        ? `<option value="${ADD_STATUS_VALUE}">+ 새 상태 추가...</option>`
+        : '';
+    return `<select data-drawer-field="${escapeAttr(field)}">${options.map((opt) => `<option value="${escapeAttr(opt)}" ${opt === current ? 'selected' : ''}>${escapeHtml(opt)}</option>`).join('')}${extra}</select>`;
   }
 
   function addTask(status = '남은 카드', open = true, category = '기타', parentId = '') {
@@ -1976,6 +2052,34 @@
     render();
     if (open) openDrawer(newTask.id);
     return newTask;
+  }
+
+  function handleEditableFieldChange(id, field, value, rerender = true) {
+    if (field === 'category' && value === ADD_CATEGORY_VALUE) {
+      const name = prompt('새 분류명을 입력하세요.');
+      const category = String(name || '').trim();
+      if (!category) {
+        render();
+        return;
+      }
+      updateTask(id, field, category, true);
+      return;
+    }
+
+    if (field === 'status' && value === ADD_STATUS_VALUE) {
+      const name = prompt('새 상태명을 입력하세요.');
+      const status = String(name || '').trim();
+      if (!status) {
+        render();
+        return;
+      }
+      state.statuses = normalizeStatusList([...getStatuses(), status], state.tasks);
+      queueBoardSettingsSave(true);
+      updateTask(id, field, status, true);
+      return;
+    }
+
+    updateTask(id, field, value, rerender);
   }
 
   function updateTask(id, field, value, rerender = true) {
@@ -2054,6 +2158,7 @@
 
   function openShareModal() {
     closeNewTableModal(false);
+    closeProjectListModal(false);
     renderShareModal();
     els.modalBackdrop.hidden = false;
     els.shareModal.hidden = false;
@@ -2061,11 +2166,12 @@
 
   function closeShareModal(hideBackdrop = true) {
     els.shareModal.hidden = true;
-    if (hideBackdrop && els.newTableModal?.hidden) els.modalBackdrop.hidden = true;
+    if (hideBackdrop && els.newTableModal?.hidden && els.projectListModal?.hidden) els.modalBackdrop.hidden = true;
   }
 
   function openNewTableModal() {
     closeShareModal(false);
+    closeProjectListModal(false);
     if (els.newTableLabel) els.newTableLabel.value = '';
     els.modalBackdrop.hidden = false;
     els.newTableModal.hidden = false;
@@ -2075,12 +2181,27 @@
   function closeNewTableModal(hideBackdrop = true) {
     if (!els.newTableModal) return;
     els.newTableModal.hidden = true;
-    if (hideBackdrop && els.shareModal?.hidden) els.modalBackdrop.hidden = true;
+    if (hideBackdrop && els.shareModal?.hidden && els.projectListModal?.hidden) els.modalBackdrop.hidden = true;
+  }
+
+  function openProjectListModal() {
+    closeShareModal(false);
+    closeNewTableModal(false);
+    renderProjectListModal();
+    els.modalBackdrop.hidden = false;
+    els.projectListModal.hidden = false;
+  }
+
+  function closeProjectListModal(hideBackdrop = true) {
+    if (!els.projectListModal) return;
+    els.projectListModal.hidden = true;
+    if (hideBackdrop && els.shareModal?.hidden && els.newTableModal?.hidden) els.modalBackdrop.hidden = true;
   }
 
   function closeAllModals() {
     closeShareModal(false);
     closeNewTableModal(false);
+    closeProjectListModal(false);
     els.modalBackdrop.hidden = true;
   }
 
