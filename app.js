@@ -126,7 +126,12 @@
     try {
       showAuthScreen(false);
       renderCloudStatus('연결 중…');
-      await supabaseClient.rpc('claim_board_invites').catch(() => {});
+      try {
+        const { error: claimError } = await supabaseClient.rpc('claim_board_invites');
+        if (claimError) console.warn('claim_board_invites skipped:', claimError.message || claimError);
+      } catch (claimError) {
+        console.warn('claim_board_invites failed:', claimError);
+      }
       await loadOrCreateCloudBoard();
       await subscribeToBoardRealtime();
       renderCloudStatus('Cloud 동기화');
