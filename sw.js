@@ -1,4 +1,4 @@
-const CACHE_NAME = 'workmap-mvp-v9-brand-logo';
+const CACHE_NAME = 'workmap-mvp-v12-refresh-loading-fix';
 const FILES = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './상상인로고.png'];
 
 self.addEventListener('install', (event) => {

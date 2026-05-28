@@ -8,6 +8,9 @@
   const REMEMBER_EMAIL_KEY = 'workmap_remember_email_v1';
   const ADD_CATEGORY_VALUE = '__workmap_add_category__';
   const ADD_STATUS_VALUE = '__workmap_add_status__';
+  const DELETE_CATEGORY_VALUE = '__workmap_delete_category__';
+  const DELETE_STATUS_VALUE = '__workmap_delete_status__';
+  const CLOUD_INVITE_TIMEOUT_MS = 4000;
   const CLOUD_CONFIG = window.WORKMAP_SUPABASE || {};
   const CLOUD_ENABLED = Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.anonKey && window.supabase);
   const supabaseClient = CLOUD_ENABLED ? window.supabase.createClient(CLOUD_CONFIG.url, CLOUD_CONFIG.anonKey) : null;
@@ -187,8 +190,13 @@
     try {
       showAuthScreen(false);
       renderCloudStatus('연결 중…');
+      renderBootLoadingState();
       try {
-        const { error: inviteClaimError } = await supabaseClient.rpc('claim_board_invites');
+        const { error: inviteClaimError } = await withTimeout(
+          supabaseClient.rpc('claim_board_invites'),
+          '초대 권한 확인',
+          CLOUD_INVITE_TIMEOUT_MS
+        );
         if (inviteClaimError) console.warn('초대 권한 적용 건너뜀:', inviteClaimError.message || inviteClaimError);
       } catch (inviteClaimError) {
         console.warn('초대 권한 적용 건너뜀:', inviteClaimError.message || inviteClaimError);
@@ -201,8 +209,56 @@
     } catch (err) {
       console.error(err);
       setAuthMessage(`보드 로딩 오류: ${err.message || err}`, true);
-      showAuthScreen(true);
+      showAuthScreen(false);
+      renderCloudLoadError(err);
     }
+  }
+
+  function withTimeout(promise, label, ms) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} 응답이 지연되고 있습니다.`)), ms);
+    });
+    return Promise.race([
+      Promise.resolve(promise).finally(() => clearTimeout(timer)),
+      timeout
+    ]);
+  }
+
+  function renderBootLoadingState() {
+    if (!els.viewHeader || !els.viewRoot) return;
+    els.boardTitle.value = state.boardName || '';
+    renderTableSelect();
+    setHeader(
+      '프로젝트를 불러오는 중입니다',
+      '새로고침 후 저장된 프로젝트와 업무 데이터를 확인하고 있습니다.',
+      ''
+    );
+    els.viewRoot.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">＋</div>
+        <h3>잠시만 기다려주세요.</h3>
+        <p>프로젝트 목록, 업무, 권한 정보를 불러오는 중입니다.</p>
+      </div>
+    `;
+  }
+
+  function renderCloudLoadError(err) {
+    renderCloudStatus('연결 확인 필요');
+    els.saveStatus.textContent = '프로젝트 로딩 실패';
+    setHeader(
+      '프로젝트를 불러오지 못했습니다',
+      err?.message || String(err || '네트워크 또는 권한 설정을 확인해야 합니다.'),
+      '<button class="primary-btn" data-action="reload-cloud-board">다시 불러오기</button>'
+    );
+    els.viewRoot.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">!</div>
+        <h3>연결을 다시 시도해 주세요.</h3>
+        <p>새로 만든 프로젝트가 바로 보이지 않으면 Supabase 권한 패치가 적용되었는지도 확인해야 합니다.</p>
+        <button class="primary-btn" data-action="reload-cloud-board">다시 불러오기</button>
+      </div>
+    `;
   }
 
   async function signInWithPassword(signup) {
@@ -817,6 +873,11 @@
         addKanbanColumn();
         return;
       }
+      const reloadCloudBoardButton = e.target.closest('[data-action="reload-cloud-board"]');
+      if (reloadCloudBoardButton) {
+        bootSignedInUser();
+        return;
+      }
       const openProjectButton = e.target.closest('[data-project-open]');
       if (openProjectButton) {
         switchProjectById(openProjectButton.dataset.projectOpen);
@@ -1131,6 +1192,29 @@
     return Boolean(category && category !== '기타' && !CATEGORIES.includes(category));
   }
 
+  async function promptDeleteCategoryFromSelect(id) {
+    const deletable = categoriesWithCurrent(getTask(id)?.category).filter(canDeleteCategory);
+    if (!deletable.length) {
+      alert('삭제할 수 있는 분류가 없습니다.');
+      render();
+      return;
+    }
+    const task = getTask(id);
+    const defaultValue = task && canDeleteCategory(task.category) ? task.category : deletable[0];
+    const name = prompt(`삭제할 분류명을 입력하세요.\n삭제 가능 분류: ${deletable.join(', ')}`, defaultValue);
+    const category = String(name || '').trim();
+    if (!category) {
+      render();
+      return;
+    }
+    if (!deletable.includes(category)) {
+      alert('목록에 있는 분류명만 삭제할 수 있습니다.');
+      render();
+      return;
+    }
+    await deleteCategory(category);
+  }
+
   async function deleteCategory(category) {
     if (!canDeleteCategory(category)) {
       alert('기본 분류는 삭제할 수 없습니다.');
@@ -1251,9 +1335,9 @@
 
   function selectHtml(field, id, options, current) {
     const extra = field === 'category'
-      ? `<option value="${ADD_CATEGORY_VALUE}">+ 새 분류 추가...</option>`
+      ? `<option value="${ADD_CATEGORY_VALUE}">+ 새 분류 추가...</option><option value="${DELETE_CATEGORY_VALUE}">- 분류 삭제...</option>`
       : field === 'status'
-        ? `<option value="${ADD_STATUS_VALUE}">+ 새 상태 추가...</option>`
+        ? `<option value="${ADD_STATUS_VALUE}">+ 새 상태 추가...</option><option value="${DELETE_STATUS_VALUE}">- 상태 삭제...</option>`
         : '';
     return `<select class="data-select" data-field="${escapeAttr(field)}" data-id="${escapeAttr(id)}">${options.map((opt) => `<option value="${escapeAttr(opt)}" ${opt === current ? 'selected' : ''}>${escapeHtml(opt)}</option>`).join('')}${extra}</select>`;
   }
@@ -1275,7 +1359,7 @@
       <div class="kanban-board">
         ${statuses.map((status) => {
           const tasks = state.tasks.filter((t) => t.status === status);
-          const canDelete = statuses.length > 1 && status !== '남은 카드';
+          const canDelete = statuses.length > 1 && canDeleteStatus(status);
           return `
             <section class="kanban-column" data-drop-status="${escapeAttr(status)}" style="--status-accent:${statusAccent(status)}">
               <div class="kanban-column-header">
@@ -1381,13 +1465,44 @@
     render();
   }
 
+  function fallbackStatus() {
+    return DEFAULT_STATUSES[0] || '남은 카드';
+  }
+
+  function canDeleteStatus(status) {
+    return Boolean(status && status !== fallbackStatus());
+  }
+
+  async function promptDeleteStatusFromSelect(id) {
+    const deletable = getStatuses().filter(canDeleteStatus);
+    if (!deletable.length) {
+      alert('삭제할 수 있는 상태가 없습니다.');
+      render();
+      return;
+    }
+    const task = getTask(id);
+    const defaultValue = task && canDeleteStatus(task.status) ? task.status : deletable[0];
+    const name = prompt(`삭제할 상태명을 입력하세요.\n삭제 가능 상태: ${deletable.join(', ')}`, defaultValue);
+    const status = String(name || '').trim();
+    if (!status) {
+      render();
+      return;
+    }
+    if (!deletable.includes(status)) {
+      alert('목록에 있는 상태명만 삭제할 수 있습니다.');
+      render();
+      return;
+    }
+    await deleteKanbanColumn(status);
+  }
+
   async function deleteKanbanColumn(status) {
-    if (!status || status === '남은 카드') {
+    if (!canDeleteStatus(status)) {
       alert('남은 카드 컬럼은 기본 컬럼이라 삭제할 수 없습니다.');
       return;
     }
     const affected = state.tasks.filter((t) => t.status === status);
-    const fallback = getStatuses().find((s) => s === '남은 카드') || '남은 카드';
+    const fallback = getStatuses().find((s) => s === fallbackStatus()) || fallbackStatus();
     const message = affected.length
       ? `'${status}' 컬럼을 삭제하고, 이 컬럼의 카드 ${affected.length}개를 '${fallback}'로 이동할까요?`
       : `'${status}' 컬럼을 삭제할까요?`;
@@ -2098,7 +2213,7 @@
     return newTask;
   }
 
-  function handleEditableFieldChange(id, field, value, rerender = true) {
+  async function handleEditableFieldChange(id, field, value, rerender = true) {
     if (field === 'category' && value === ADD_CATEGORY_VALUE) {
       const name = prompt('새 분류명을 입력하세요.');
       const category = String(name || '').trim();
@@ -2107,6 +2222,11 @@
         return;
       }
       updateTask(id, field, category, true);
+      return;
+    }
+
+    if (field === 'category' && value === DELETE_CATEGORY_VALUE) {
+      await promptDeleteCategoryFromSelect(id);
       return;
     }
 
@@ -2120,6 +2240,11 @@
       state.statuses = normalizeStatusList([...getStatuses(), status], state.tasks);
       queueBoardSettingsSave(true);
       updateTask(id, field, status, true);
+      return;
+    }
+
+    if (field === 'status' && value === DELETE_STATUS_VALUE) {
+      await promptDeleteStatusFromSelect(id);
       return;
     }
 
