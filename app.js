@@ -2,10 +2,11 @@
   const STORAGE_KEY = 'workmap_mvp_state_v1';
   const CLOUD_VIEW_KEY = 'workmap_cloud_view_v1';
   const CLOUD_BOARD_KEY = 'workmap_cloud_board_v1';
+  const CLOUD_BOARD_SETTINGS_FALLBACK_KEY = 'workmap_cloud_board_settings_v2';
   const CLOUD_CONFIG = window.WORKMAP_SUPABASE || {};
   const CLOUD_ENABLED = Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.anonKey && window.supabase);
   const supabaseClient = CLOUD_ENABLED ? window.supabase.createClient(CLOUD_CONFIG.url, CLOUD_CONFIG.anonKey) : null;
-  const STATUSES = ['남은 카드', '광고/리드 확보', '문의/방문', '입찰 진행 중', '설계/제작 준비', '설치/시공 중', '마감 예정', '완료', '확인 필요'];
+  const DEFAULT_STATUSES = ['남은 카드', '광고/리드 확보', '문의/방문', '입찰 진행 중', '설계/제작 준비', '설치/시공 중', '마감 예정', '완료', '확인 필요'];
   const CATEGORIES = ['광고 부분', '고객사 확보', '사업부분', '기타'];
   const PRIORITIES = ['낮음', '보통', '높음', '긴급'];
   const STATUS_COLOR = {
@@ -38,6 +39,9 @@
   let applyingRemoteChange = false;
   const pendingCloudTaskTimers = new Map();
   let boardTitleSaveTimer = null;
+  let boardSettingsSaveTimer = null;
+  let boardSettingsColumnMissing = false;
+  let mindDragSuppressClick = false;
 
   const els = {
     boardTitle: $('#boardTitle'),
@@ -127,10 +131,10 @@
       showAuthScreen(false);
       renderCloudStatus('연결 중…');
       try {
-        const { error: claimError } = await supabaseClient.rpc('claim_board_invites');
-        if (claimError) console.warn('claim_board_invites skipped:', claimError.message || claimError);
-      } catch (claimError) {
-        console.warn('claim_board_invites failed:', claimError);
+        const { error: inviteClaimError } = await supabaseClient.rpc('claim_board_invites');
+        if (inviteClaimError) console.warn('초대 권한 적용 건너뜀:', inviteClaimError.message || inviteClaimError);
+      } catch (inviteClaimError) {
+        console.warn('초대 권한 적용 건너뜀:', inviteClaimError.message || inviteClaimError);
       }
       await loadOrCreateCloudBoard();
       await subscribeToBoardRealtime();
@@ -248,7 +252,8 @@
       view: localStorage.getItem(CLOUD_VIEW_KEY) || state.view || 'table',
       calendarDate: state.calendarDate || '2026-05-01',
       members: (members || []).map(memberFromRow),
-      tasks: (tasks || []).map(taskFromRow)
+      tasks: (tasks || []).map(taskFromRow),
+      settings: mergeBoardSettings(loadLocalBoardSettings(boardId), board.settings)
     });
   }
 
@@ -319,10 +324,18 @@
   }
 
   function handleBoardRealtime(payload) {
+    let shouldRender = false;
     if (payload.new?.title && payload.new.title !== state.boardName) {
       state.boardName = payload.new.title;
-      render();
+      shouldRender = true;
     }
+    if (payload.new && Object.prototype.hasOwnProperty.call(payload.new, 'settings')) {
+      const settings = mergeBoardSettings({}, payload.new.settings || {});
+      state.statuses = normalizeStatusList(settings.statuses || state.statuses, state.tasks);
+      state.mindPositions = normalizeMindPositions(settings.mindPositions || state.mindPositions);
+      shouldRender = true;
+    }
+    if (shouldRender) render();
   }
 
   function handleMemberRealtime(payload) {
@@ -403,6 +416,67 @@
     }, 500);
   }
 
+  function queueBoardSettingsSave(immediate = false) {
+    scheduleSave(immediate);
+    saveLocalBoardSettings();
+    if (!CLOUD_ENABLED || !currentBoardId || applyingRemoteChange || boardSettingsColumnMissing) return;
+    clearTimeout(boardSettingsSaveTimer);
+    const run = () => saveCloudBoardSettings();
+    if (immediate) run();
+    else boardSettingsSaveTimer = setTimeout(run, 450);
+  }
+
+  async function saveCloudBoardSettings() {
+    if (!CLOUD_ENABLED || !currentBoardId || boardSettingsColumnMissing) return;
+    const settings = getBoardSettings();
+    const { error } = await supabaseClient
+      .from('boards')
+      .update({ settings })
+      .eq('id', currentBoardId);
+    if (error) {
+      console.warn('보드 설정 저장 실패:', error.message || error);
+      if (String(error.message || '').toLowerCase().includes('settings')) {
+        boardSettingsColumnMissing = true;
+        els.saveStatus.textContent = '설정은 로컬 저장됨 · SQL 패치 필요';
+      } else {
+        els.saveStatus.textContent = '보드 설정 저장 실패';
+      }
+      return;
+    }
+    els.saveStatus.textContent = '보드 설정 저장됨';
+  }
+
+  function getBoardSettings() {
+    return {
+      statuses: normalizeStatusList(state.statuses, state.tasks),
+      mindPositions: normalizeMindPositions(state.mindPositions || {})
+    };
+  }
+
+  function loadLocalBoardSettings(boardId) {
+    if (!boardId) return {};
+    try {
+      return JSON.parse(localStorage.getItem(`${CLOUD_BOARD_SETTINGS_FALLBACK_KEY}:${boardId}`) || '{}');
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function saveLocalBoardSettings() {
+    const key = currentBoardId ? `${CLOUD_BOARD_SETTINGS_FALLBACK_KEY}:${currentBoardId}` : `${CLOUD_BOARD_SETTINGS_FALLBACK_KEY}:local`;
+    try { localStorage.setItem(key, JSON.stringify(getBoardSettings())); } catch (_) {}
+  }
+
+  function mergeBoardSettings(...items) {
+    return items.reduce((merged, item) => {
+      if (!item || typeof item !== 'object') return merged;
+      return {
+        statuses: item.statuses || merged.statuses,
+        mindPositions: item.mindPositions || merged.mindPositions
+      };
+    }, { statuses: DEFAULT_STATUSES, mindPositions: {} });
+  }
+
   function getInitialState() {
     const shared = loadSharedStateFromHash();
     if (shared) return normalizeState(shared);
@@ -418,6 +492,8 @@
       boardName: 'LED 전광판 사업 진행 상황',
       view: 'table',
       calendarDate: '2026-05-01',
+      statuses: DEFAULT_STATUSES.slice(),
+      mindPositions: {},
       members: [
         { id: uid(), email: 'project@sangsangin.co.kr', role: '관리자' }
       ],
@@ -445,10 +521,13 @@
 
   function normalizeState(raw) {
     const base = demoState();
+    const settings = mergeBoardSettings(raw.settings, raw);
     const clean = {
       boardName: raw.boardName || base.boardName,
       view: raw.view || 'table',
       calendarDate: raw.calendarDate || '2026-05-01',
+      statuses: Array.isArray(settings.statuses) ? settings.statuses : base.statuses.slice(),
+      mindPositions: normalizeMindPositions(settings.mindPositions || raw.mindPositions || {}),
       members: Array.isArray(raw.members) ? raw.members : [],
       tasks: Array.isArray(raw.tasks) ? raw.tasks : []
     };
@@ -466,7 +545,31 @@
       createdAt: t.createdAt || new Date().toISOString(),
       updatedAt: t.updatedAt || new Date().toISOString()
     }));
+    clean.statuses = normalizeStatusList(clean.statuses, clean.tasks);
     return clean;
+  }
+
+  function normalizeStatusList(list, tasks = []) {
+    const source = Array.isArray(list) && list.length ? list : DEFAULT_STATUSES;
+    const normalized = Array.from(new Set([...source, ...tasks.map((t) => t.status)].map((s) => String(s || '').trim()).filter(Boolean)));
+    if (!normalized.includes('남은 카드')) normalized.unshift('남은 카드');
+    return normalized;
+  }
+
+  function normalizeMindPositions(value) {
+    const output = {};
+    if (!value || typeof value !== 'object') return output;
+    Object.entries(value).forEach(([key, pos]) => {
+      const x = Number(pos?.x);
+      const y = Number(pos?.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) output[key] = { x, y };
+    });
+    return output;
+  }
+
+  function getStatuses() {
+    state.statuses = normalizeStatusList(state.statuses, state.tasks);
+    return state.statuses;
   }
 
   function bindGlobalEvents() {
@@ -510,6 +613,26 @@
     });
 
     document.addEventListener('click', (e) => {
+      if (mindDragSuppressClick) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      const addStatusButton = e.target.closest('[data-action="add-status"]');
+      if (addStatusButton) {
+        addKanbanColumn();
+        return;
+      }
+      const resetMindButton = e.target.closest('[data-action="reset-mindmap-layout"]');
+      if (resetMindButton) {
+        resetMindmapLayout();
+        return;
+      }
+      const deleteStatusButton = e.target.closest('[data-delete-status]');
+      if (deleteStatusButton) {
+        deleteKanbanColumn(deleteStatusButton.dataset.deleteStatus);
+        return;
+      }
       const addTaskButton = e.target.closest('[data-action="add-task"]');
       if (addTaskButton) {
         addTask(addTaskButton.dataset.status || '남은 카드');
@@ -652,7 +775,7 @@
   }
 
   function statusesWithCurrent(current) {
-    return Array.from(new Set([...STATUSES, current].filter(Boolean)));
+    return Array.from(new Set([...getStatuses(), current].filter(Boolean)));
   }
 
   function selectHtml(field, id, options, current) {
@@ -667,22 +790,23 @@
   function renderKanbanView() {
     setHeader(
       '칸반 보기',
-      '카드를 다른 컬럼으로 드래그하면 상태값이 바뀌고, 테이블/마인드맵/타임라인/캘린더에 반영됩니다.',
-      '<button class="primary-btn" data-action="add-task">업무 추가</button>'
+      '컬럼을 직접 추가/삭제할 수 있고, 카드를 다른 컬럼으로 드래그하면 상태값이 전체 보기에 반영됩니다.',
+      '<button class="ghost-btn" data-action="add-status">+ 컬럼 추가</button><button class="primary-btn" data-action="add-task">업무 추가</button>'
     );
-    if (!state.tasks.length) {
-      els.viewRoot.innerHTML = emptyState();
-      return;
-    }
+    const statuses = getStatuses();
     els.viewRoot.innerHTML = `
       <div class="kanban-board">
-        ${STATUSES.map((status) => {
+        ${statuses.map((status) => {
           const tasks = state.tasks.filter((t) => t.status === status);
+          const canDelete = statuses.length > 1 && status !== '남은 카드';
           return `
             <section class="kanban-column" data-drop-status="${escapeAttr(status)}">
               <div class="kanban-column-header">
-                <span>${escapeHtml(status)}</span>
-                <span class="badge gray">${tasks.length}</span>
+                <div class="kanban-column-title">
+                  <span>${escapeHtml(status)}</span>
+                  <span class="badge gray">${tasks.length}</span>
+                </div>
+                ${canDelete ? `<button class="kanban-delete-column" title="컬럼 삭제" data-delete-status="${escapeAttr(status)}">×</button>` : ''}
               </div>
               <div class="kanban-cards">
                 ${tasks.map(kanbanCard).join('')}
@@ -733,11 +857,55 @@
     });
   }
 
+  function addKanbanColumn() {
+    const name = prompt('추가할 칸반 컬럼명을 입력하세요.');
+    const status = String(name || '').trim();
+    if (!status) return;
+    if (getStatuses().includes(status)) {
+      alert('이미 있는 컬럼입니다.');
+      return;
+    }
+    state.statuses = normalizeStatusList([...getStatuses(), status], state.tasks);
+    queueBoardSettingsSave(true);
+    render();
+  }
+
+  async function deleteKanbanColumn(status) {
+    if (!status || status === '남은 카드') {
+      alert('남은 카드 컬럼은 기본 컬럼이라 삭제할 수 없습니다.');
+      return;
+    }
+    const affected = state.tasks.filter((t) => t.status === status);
+    const fallback = getStatuses().find((s) => s === '남은 카드') || '남은 카드';
+    const message = affected.length
+      ? `'${status}' 컬럼을 삭제하고, 이 컬럼의 카드 ${affected.length}개를 '${fallback}'로 이동할까요?`
+      : `'${status}' 컬럼을 삭제할까요?`;
+    if (!confirm(message)) return;
+
+    state.statuses = getStatuses().filter((s) => s !== status);
+    if (!state.statuses.includes(fallback)) state.statuses.unshift(fallback);
+    affected.forEach((t) => {
+      t.status = fallback;
+      t.updatedAt = new Date().toISOString();
+    });
+
+    if (CLOUD_ENABLED && currentBoardId && affected.length) {
+      const { error } = await supabaseClient
+        .from('tasks')
+        .update({ status: fallback })
+        .eq('board_id', currentBoardId)
+        .eq('status', status);
+      if (error) console.warn('컬럼 삭제 후 카드 이동 저장 실패:', error.message || error);
+    }
+    queueBoardSettingsSave(true);
+    render();
+  }
+
   function renderMindmapView() {
     setHeader(
       '마인드맵 보기',
-      '테이블의 분류와 상위 업무 관계를 기준으로 자동 생성됩니다. 노드를 클릭하면 상세 정보를 수정할 수 있습니다.',
-      '<button class="primary-btn" data-action="add-task">업무 추가</button>'
+      '노드를 드래그해서 위치를 조정할 수 있습니다. 노드를 클릭하면 상세 정보를 수정합니다.',
+      '<button class="ghost-btn" data-action="reset-mindmap-layout">자동정렬 초기화</button><button class="primary-btn" data-action="add-task">업무 추가</button>'
     );
     if (!state.tasks.length) {
       els.viewRoot.innerHTML = emptyState();
@@ -745,6 +913,7 @@
     }
     const tree = buildMindmapTree();
     layoutTree(tree);
+    applySavedMindPositions(tree);
     const allNodes = flattenTree(tree);
     const minX = Math.min(...allNodes.map((n) => n.x)) - 150;
     const maxX = Math.max(...allNodes.map((n) => n.x)) + 150;
@@ -764,6 +933,7 @@
         </svg>
       </div>
     `;
+    bindMindmapDrag();
   }
 
   function buildMindmapTree() {
@@ -818,6 +988,17 @@
     layout(root, 0);
   }
 
+  function applySavedMindPositions(root) {
+    const positions = state.mindPositions || {};
+    walkTree(root, (node) => {
+      const saved = positions[node.id];
+      if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+        node.x = saved.x;
+        node.y = saved.y;
+      }
+    });
+  }
+
   function renderMindLink(parent, child) {
     const py = parent.y + 23;
     const cy = child.y - 23;
@@ -840,12 +1021,72 @@
     const titleLines = wrapText(node.title, isRoot ? 15 : 18, isRoot ? 2 : 1);
     const meta = taskObj ? (dateRangeLabel(taskObj) || taskObj.status) : '';
     return `
-      <g class="mind-node" transform="translate(${x},${y})" ${taskObj ? `data-open-task="${escapeAttr(taskObj.id)}"` : ''}>
+      <g class="mind-node" transform="translate(${x},${y})" data-mind-id="${escapeAttr(node.id)}" data-mind-x="${node.x}" data-mind-y="${node.y}" data-mind-width="${width}" data-mind-height="${height}" ${taskObj ? `data-open-task="${escapeAttr(taskObj.id)}"` : ''}>
         <rect width="${width}" height="${height}" rx="12" fill="${fill}" stroke="${stroke}" stroke-width="1.7"></rect>
         ${titleLines.map((line, i) => `<text x="${width / 2}" y="${isRoot ? 23 + i * 20 : 20 + i * 15}" text-anchor="middle" fill="${textColor}" font-size="${isRoot ? 18 : 12}" font-weight="${isRoot ? 900 : isCategory ? 900 : 800}">${escapeHtml(line)}</text>`).join('')}
         ${taskObj ? `<text x="${width / 2}" y="${height - 11}" text-anchor="middle" fill="#6d7788" font-size="10" font-weight="700">${escapeHtml(meta)}</text>` : ''}
       </g>
     `;
+  }
+
+
+  function bindMindmapDrag() {
+    const svg = $('.mindmap-svg', els.viewRoot);
+    if (!svg) return;
+    const svgPoint = (event) => {
+      const point = svg.createSVGPoint();
+      point.x = event.clientX;
+      point.y = event.clientY;
+      const matrix = svg.getScreenCTM();
+      return matrix ? point.matrixTransform(matrix.inverse()) : { x: event.clientX, y: event.clientY };
+    };
+    $$('[data-mind-id]', svg).forEach((node) => {
+      node.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        const id = node.dataset.mindId;
+        const width = Number(node.dataset.mindWidth) || 140;
+        const height = Number(node.dataset.mindHeight) || 46;
+        const original = { x: Number(node.dataset.mindX), y: Number(node.dataset.mindY) };
+        const start = svgPoint(event);
+        let latest = original;
+        let moved = false;
+        node.setPointerCapture?.(event.pointerId);
+        node.classList.add('dragging');
+
+        const onMove = (moveEvent) => {
+          const now = svgPoint(moveEvent);
+          const dx = now.x - start.x;
+          const dy = now.y - start.y;
+          if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
+          latest = { x: original.x + dx, y: original.y + dy };
+          node.setAttribute('transform', `translate(${latest.x - width / 2},${latest.y - height / 2})`);
+        };
+        const onUp = () => {
+          node.removeEventListener('pointermove', onMove);
+          node.removeEventListener('pointerup', onUp);
+          node.removeEventListener('pointercancel', onUp);
+          node.classList.remove('dragging');
+          if (moved) {
+            mindDragSuppressClick = true;
+            setTimeout(() => { mindDragSuppressClick = false; }, 0);
+            state.mindPositions = { ...(state.mindPositions || {}) };
+            state.mindPositions[id] = { x: Math.round(latest.x), y: Math.round(latest.y) };
+            queueBoardSettingsSave(true);
+            renderCurrentView();
+          }
+        };
+        node.addEventListener('pointermove', onMove);
+        node.addEventListener('pointerup', onUp);
+        node.addEventListener('pointercancel', onUp);
+      });
+    });
+  }
+
+  function resetMindmapLayout() {
+    if (!confirm('마인드맵 노드 위치를 자동정렬 상태로 되돌릴까요?')) return;
+    state.mindPositions = {};
+    queueBoardSettingsSave(true);
+    renderCurrentView();
   }
 
   function wrapText(text, maxChars, maxLines) {
@@ -895,17 +1136,18 @@
     const min = addDays(startOfDay(new Date(Math.min(...dates))), -3);
     const max = addDays(startOfDay(new Date(Math.max(...dates))), 10);
     const totalDays = Math.max(1, daysBetween(min, max) + 1);
-    const monthMarks = getMonthMarks(min, max);
+    const dayMarks = getDayMarks(min, max);
+    const timelineWidth = Math.max(960, totalDays * 58);
 
     els.viewRoot.innerHTML = `
-      <div class="timeline-wrap">
+      <div class="timeline-wrap timeline-daily">
         <div class="timeline-left">
           <div class="timeline-head">업무명</div>
           ${datedTasks.map((t) => `<div class="timeline-label" title="${escapeAttr(t.title)}">${escapeHtml(t.title)}</div>`).join('')}
         </div>
-        <div class="timeline-right">
-          <div class="timeline-axis">
-            ${monthMarks.map((m) => `<div class="axis-tick" style="left:${m.left}%"></div><div class="axis-month" style="left:${m.left}%">${escapeHtml(m.label)}</div>`).join('')}
+        <div class="timeline-right" style="min-width:${timelineWidth}px">
+          <div class="timeline-axis timeline-axis-days" style="--day-count:${totalDays}">
+            ${dayMarks.map((d) => `<div class="timeline-day ${d.isMonthStart ? 'month-start' : ''}"><b>${escapeHtml(d.day)}</b><span>${escapeHtml(d.weekday)}</span>${d.isMonthStart ? `<em>${escapeHtml(d.month)}</em>` : ''}</div>`).join('')}
           </div>
           ${datedTasks.map((t) => renderTimelineRow(t, min, totalDays)).join('')}
         </div>
@@ -926,7 +1168,7 @@
     const width = Math.max(2.2, (daysBetween(start, end) + 1) / totalDays * 100);
     const color = timelineColor(t);
     return `
-      <div class="timeline-row">
+      <div class="timeline-row" style="--day-count:${totalDays}">
         <div class="timeline-bar" data-open-task="${escapeAttr(t.id)}" style="left:${left}%; width:${width}%; background:${color.bg}; border-color:${color.border}; color:${color.text};" title="${escapeAttr(t.title)} · ${escapeAttr(dateRangeLabel(t))}">
           ${escapeHtml(t.title)} ${dateRangeLabel(t) ? `· ${escapeHtml(dateRangeLabel(t))}` : ''}
         </div>
@@ -934,15 +1176,18 @@
     `;
   }
 
-  function getMonthMarks(min, max) {
+  function getDayMarks(min, max) {
     const marks = [];
-    const total = Math.max(1, daysBetween(min, max) + 1);
-    const cursor = new Date(min.getFullYear(), min.getMonth(), 1);
-    if (cursor < min) cursor.setMonth(cursor.getMonth() + 1);
+    const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
+    let cursor = startOfDay(min);
     while (cursor <= max) {
-      const left = Math.max(0, daysBetween(min, cursor)) / total * 100;
-      marks.push({ left, label: `${cursor.getFullYear()}.${String(cursor.getMonth() + 1).padStart(2, '0')}` });
-      cursor.setMonth(cursor.getMonth() + 1);
+      marks.push({
+        day: `${cursor.getMonth() + 1}/${cursor.getDate()}`,
+        weekday: weekdays[cursor.getDay()],
+        month: `${cursor.getFullYear()}.${String(cursor.getMonth() + 1).padStart(2, '0')}`,
+        isMonthStart: cursor.getDate() === 1
+      });
+      cursor = addDays(cursor, 1);
     }
     return marks;
   }
@@ -963,12 +1208,12 @@
   function renderCalendarView() {
     setHeader(
       '캘린더 보기',
-      '시작일/마감일을 월간 캘린더에 표시합니다. 일정을 클릭하면 상세 정보를 수정할 수 있습니다.',
+      '같은 업무는 날짜별로 반복하지 않고 시작일부터 종료일까지 이어지는 막대로 표시합니다.',
       '<button class="primary-btn" data-action="add-task">업무 추가</button>'
     );
     const cursor = parseMonth(state.calendarDate);
     const gridStart = addDays(new Date(cursor.getFullYear(), cursor.getMonth(), 1), -mondayOffset(new Date(cursor.getFullYear(), cursor.getMonth(), 1)));
-    const days = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
+    const weeks = Array.from({ length: 6 }, (_, weekIndex) => Array.from({ length: 7 }, (_, dayIndex) => addDays(gridStart, weekIndex * 7 + dayIndex)));
     const weekdayLabels = ['월', '화', '수', '목', '금', '토', '일'];
 
     els.viewRoot.innerHTML = `
@@ -980,9 +1225,13 @@
           <button class="ghost-btn" id="nextMonthBtn">다음 달</button>
         </div>
       </div>
-      <div class="calendar-grid">
-        ${weekdayLabels.map((w) => `<div class="weekday">${w}</div>`).join('')}
-        ${days.map((day) => renderCalendarDay(day, cursor)).join('')}
+      <div class="calendar-board">
+        <div class="calendar-weekdays">
+          ${weekdayLabels.map((w) => `<div class="weekday">${w}</div>`).join('')}
+        </div>
+        <div class="calendar-weeks">
+          ${weeks.map((week) => renderCalendarWeek(week, cursor)).join('')}
+        </div>
       </div>
     `;
     $('#prevMonthBtn').addEventListener('click', () => changeMonth(-1));
@@ -995,20 +1244,70 @@
     });
   }
 
-  function renderCalendarDay(day, cursor) {
-    const dayKey = toDateInput(day);
-    const isOut = day.getMonth() !== cursor.getMonth();
-    const events = state.tasks.filter((t) => taskOccursOn(t, dayKey));
+  function renderCalendarWeek(week, cursor) {
+    const segments = calendarSegmentsForWeek(week);
+    const laneCount = Math.max(2, ...segments.map((s) => s.lane + 1));
     return `
-      <div class="day-cell ${isOut ? 'out-month' : ''}">
-        <div class="day-number">${day.getDate()}</div>
-        ${events.slice(0, 4).map((t) => {
-          const color = timelineColor(t);
-          return `<div class="calendar-event" data-open-task="${escapeAttr(t.id)}" style="background:${color.bg}; border-color:${color.border}; color:${color.text};" title="${escapeAttr(t.title)}">${escapeHtml(t.title)}</div>`;
+      <div class="calendar-week" style="--calendar-lanes:${laneCount}">
+        ${week.map((day) => {
+          const isOut = day.getMonth() !== cursor.getMonth();
+          return `
+            <div class="calendar-day-shell ${isOut ? 'out-month' : ''}">
+              <div class="day-number">${day.getDate()}</div>
+            </div>
+          `;
         }).join('')}
-        ${events.length > 4 ? `<div class="badge gray">+${events.length - 4}개</div>` : ''}
+        <div class="calendar-event-layer">
+          ${segments.map((segment) => {
+            const color = timelineColor(segment.task);
+            const left = ((segment.colStart - 1) / 7) * 100;
+            const width = (segment.span / 7) * 100;
+            const classes = [
+              'calendar-event-bar',
+              segment.startsBefore ? 'continues-before' : '',
+              segment.endsAfter ? 'continues-after' : ''
+            ].filter(Boolean).join(' ');
+            return `<div class="${classes}" data-open-task="${escapeAttr(segment.task.id)}" style="left:${left}%; width:calc(${width}% - 8px); top:${segment.lane * 30}px; background:${color.bg}; border-color:${color.border}; color:${color.text};" title="${escapeAttr(segment.task.title)} · ${escapeAttr(dateRangeLabel(segment.task))}">${escapeHtml(segment.task.title)}</div>`;
+          }).join('')}
+        </div>
       </div>
     `;
+  }
+
+  function calendarSegmentsForWeek(week) {
+    const weekStart = startOfDay(week[0]);
+    const weekEnd = startOfDay(week[6]);
+    const segments = state.tasks
+      .filter((t) => t.startDate || t.endDate)
+      .map((task) => {
+        const taskStart = startOfDay(new Date(task.startDate || task.endDate));
+        const taskEnd = startOfDay(new Date(task.endDate || task.startDate));
+        if (taskEnd < weekStart || taskStart > weekEnd) return null;
+        const segmentStart = taskStart < weekStart ? weekStart : taskStart;
+        const segmentEnd = taskEnd > weekEnd ? weekEnd : taskEnd;
+        const colStart = mondayOffset(segmentStart) + 1;
+        const span = daysBetween(segmentStart, segmentEnd) + 1;
+        return {
+          task,
+          colStart,
+          span,
+          lane: 0,
+          startsBefore: taskStart < weekStart,
+          endsAfter: taskEnd > weekEnd
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.colStart - b.colStart || b.span - a.span || a.task.title.localeCompare(b.task.title));
+
+    const laneEnds = [];
+    segments.forEach((segment) => {
+      const segmentEndCol = segment.colStart + segment.span - 1;
+      let lane = laneEnds.findIndex((endCol) => segment.colStart > endCol);
+      if (lane < 0) lane = laneEnds.length;
+      laneEnds[lane] = segmentEndCol;
+      segment.lane = lane;
+    });
+    return segments;
   }
 
   function taskOccursOn(t, dayKey) {

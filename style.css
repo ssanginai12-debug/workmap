@@ -23,6 +23,9 @@
 }
 
 * { box-sizing: border-box; }
+/* hidden 속성이 author CSS에 덮이지 않도록 강제 적용 */
+[hidden] { display: none !important; }
+
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -32,7 +35,6 @@ body {
     radial-gradient(circle at top left, rgba(47, 92, 255, 0.10), transparent 35vw),
     linear-gradient(180deg, #fbfcff 0%, var(--bg) 100%);
 }
-[hidden] { display: none !important; }
 button, input, select, textarea { font-family: inherit; }
 button { cursor: pointer; }
 
@@ -419,3 +421,121 @@ button { cursor: pointer; }
 .save-status strong { color: var(--blue); }
 .topbar-actions #userEmail { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .danger-text { color: var(--red); font-weight: 800; }
+
+
+/* Feature update: draggable mindmap, custom kanban columns, daily timeline, continuous calendar bars */
+.kanban-column-header { gap: 8px; }
+.kanban-column-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.kanban-column-title > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kanban-delete-column {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #ffd3d7;
+  border-radius: 999px;
+  background: var(--red-weak);
+  color: var(--red);
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 900;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+.kanban-delete-column:hover { filter: brightness(0.97); transform: translateY(-1px); }
+
+.mind-node { cursor: grab; touch-action: none; }
+.mind-node.dragging { cursor: grabbing; opacity: 0.92; }
+.mind-node.dragging rect { stroke-width: 2.8; filter: drop-shadow(0 14px 22px rgba(47, 92, 255, 0.20)); }
+.mindmap-shell { cursor: default; }
+
+.timeline-daily .timeline-right { overflow: visible; }
+.timeline-axis-days {
+  display: grid;
+  grid-template-columns: repeat(var(--day-count), minmax(58px, 1fr));
+  min-width: 100%;
+}
+.timeline-day {
+  min-height: 54px;
+  border-right: 1px solid rgba(214, 221, 234, 0.85);
+  padding: 7px 6px 5px;
+  display: grid;
+  align-content: start;
+  gap: 1px;
+  background: #f7f9ff;
+}
+.timeline-day:last-child { border-right: 0; }
+.timeline-day b { font-size: 12px; color: var(--text); line-height: 1.1; }
+.timeline-day span { font-size: 11px; color: var(--muted); font-weight: 800; }
+.timeline-day em { font-size: 10px; color: var(--blue); font-style: normal; font-weight: 900; }
+.timeline-day.month-start { background: #edf2ff; box-shadow: inset 2px 0 0 var(--blue); }
+.timeline-daily .timeline-row { background-size: calc(100% / var(--day-count)) 100%; }
+
+.calendar-board {
+  min-width: 920px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  overflow: hidden;
+  background: #fff;
+}
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(130px, 1fr));
+  background: #f7f9ff;
+  border-bottom: 1px solid var(--line);
+}
+.calendar-weekdays .weekday {
+  border-right: 1px solid var(--line);
+  border-bottom: 0;
+}
+.calendar-weekdays .weekday:last-child { border-right: 0; }
+.calendar-weeks { display: grid; }
+.calendar-week {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(130px, 1fr));
+  min-height: calc(82px + (var(--calendar-lanes) * 30px));
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+.calendar-week:last-child { border-bottom: 0; }
+.calendar-day-shell {
+  position: relative;
+  min-height: calc(82px + (var(--calendar-lanes) * 30px));
+  padding: 9px;
+  border-right: 1px solid var(--line);
+  background: #fff;
+}
+.calendar-day-shell:nth-child(7) { border-right: 0; }
+.calendar-day-shell.out-month { background: #f8f9fc; color: #a7afbd; }
+.calendar-event-layer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 38px;
+  bottom: 8px;
+  pointer-events: none;
+}
+.calendar-event-bar {
+  position: absolute;
+  height: 24px;
+  border-radius: 999px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 900;
+  border: 1px solid transparent;
+  box-shadow: 0 8px 14px rgba(25,35,65,0.08);
+  pointer-events: auto;
+}
+.calendar-event-bar.continues-before { border-top-left-radius: 5px; border-bottom-left-radius: 5px; }
+.calendar-event-bar.continues-after { border-top-right-radius: 5px; border-bottom-right-radius: 5px; }
+.calendar-event-bar:hover { filter: brightness(0.98); transform: translateY(-1px); }
+
+@media (max-width: 720px) {
+  .calendar-board { min-width: 840px; }
+  .calendar-weekdays, .calendar-week { grid-template-columns: repeat(7, minmax(120px, 1fr)); }
+}
