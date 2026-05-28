@@ -26,6 +26,41 @@
     '사업부분': '#7a5cff',
     '기타': '#6d7788'
   };
+  const FIXED_KOREAN_HOLIDAYS = {
+    '01-01': '신정',
+    '03-01': '삼일절',
+    '05-05': '어린이날',
+    '06-06': '현충일',
+    '08-15': '광복절',
+    '10-03': '개천절',
+    '10-09': '한글날',
+    '12-25': '성탄절'
+  };
+  const KOREAN_HOLIDAYS_BY_YEAR = {
+    2026: {
+      '2026-01-01': '신정',
+      '2026-02-16': '설날',
+      '2026-02-17': '설날',
+      '2026-02-18': '설날',
+      '2026-03-01': '삼일절',
+      '2026-03-02': '대체공휴일',
+      '2026-05-01': '근로자의 날',
+      '2026-05-05': '어린이날',
+      '2026-05-24': '부처님오신날',
+      '2026-05-25': '대체공휴일',
+      '2026-06-03': '지방선거',
+      '2026-06-06': '현충일',
+      '2026-07-17': '제헌절',
+      '2026-08-15': '광복절',
+      '2026-09-24': '추석',
+      '2026-09-25': '추석',
+      '2026-09-26': '추석',
+      '2026-10-03': '개천절',
+      '2026-10-05': '대체공휴일',
+      '2026-10-09': '한글날',
+      '2026-12-25': '성탄절'
+    }
+  };
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -333,6 +368,7 @@
       const settings = mergeBoardSettings({}, payload.new.settings || {});
       state.statuses = normalizeStatusList(settings.statuses || state.statuses, state.tasks);
       state.mindPositions = normalizeMindPositions(settings.mindPositions || state.mindPositions);
+      state.mindZoom = normalizeMindZoom(settings.mindZoom || state.mindZoom);
       shouldRender = true;
     }
     if (shouldRender) render();
@@ -449,7 +485,8 @@
   function getBoardSettings() {
     return {
       statuses: normalizeStatusList(state.statuses, state.tasks),
-      mindPositions: normalizeMindPositions(state.mindPositions || {})
+      mindPositions: normalizeMindPositions(state.mindPositions || {}),
+      mindZoom: normalizeMindZoom(state.mindZoom)
     };
   }
 
@@ -472,9 +509,10 @@
       if (!item || typeof item !== 'object') return merged;
       return {
         statuses: item.statuses || merged.statuses,
-        mindPositions: item.mindPositions || merged.mindPositions
+        mindPositions: item.mindPositions || merged.mindPositions,
+        mindZoom: item.mindZoom || merged.mindZoom
       };
-    }, { statuses: DEFAULT_STATUSES, mindPositions: {} });
+    }, { statuses: DEFAULT_STATUSES, mindPositions: {}, mindZoom: 1 });
   }
 
   function getInitialState() {
@@ -494,6 +532,7 @@
       calendarDate: '2026-05-01',
       statuses: DEFAULT_STATUSES.slice(),
       mindPositions: {},
+      mindZoom: 1,
       members: [
         { id: uid(), email: 'project@sangsangin.co.kr', role: '관리자' }
       ],
@@ -528,6 +567,7 @@
       calendarDate: raw.calendarDate || '2026-05-01',
       statuses: Array.isArray(settings.statuses) ? settings.statuses : base.statuses.slice(),
       mindPositions: normalizeMindPositions(settings.mindPositions || raw.mindPositions || {}),
+      mindZoom: normalizeMindZoom(settings.mindZoom || raw.mindZoom || base.mindZoom),
       members: Array.isArray(raw.members) ? raw.members : [],
       tasks: Array.isArray(raw.tasks) ? raw.tasks : []
     };
@@ -565,6 +605,12 @@
       if (Number.isFinite(x) && Number.isFinite(y)) output[key] = { x, y };
     });
     return output;
+  }
+
+  function normalizeMindZoom(value) {
+    const zoom = Number(value);
+    if (!Number.isFinite(zoom)) return 1;
+    return Math.min(1.8, Math.max(0.6, Math.round(zoom * 100) / 100));
   }
 
   function getStatuses() {
@@ -626,6 +672,11 @@
       const resetMindButton = e.target.closest('[data-action="reset-mindmap-layout"]');
       if (resetMindButton) {
         resetMindmapLayout();
+        return;
+      }
+      const mindZoomButton = e.target.closest('[data-mind-zoom]');
+      if (mindZoomButton) {
+        setMindZoom(mindZoomButton.dataset.mindZoom);
         return;
       }
       const deleteStatusButton = e.target.closest('[data-delete-status]');
@@ -902,10 +953,16 @@
   }
 
   function renderMindmapView() {
+    const zoom = normalizeMindZoom(state.mindZoom);
     setHeader(
       '마인드맵 보기',
       '노드를 드래그해서 위치를 조정할 수 있습니다. 노드를 클릭하면 상세 정보를 수정합니다.',
-      '<button class="ghost-btn" data-action="reset-mindmap-layout">자동정렬 초기화</button><button class="primary-btn" data-action="add-task">업무 추가</button>'
+      `<div class="mindmap-toolbar" aria-label="마인드맵 확대 축소">
+        <button class="icon-control" data-mind-zoom="out" title="축소" aria-label="축소">-</button>
+        <span>${Math.round(zoom * 100)}%</span>
+        <button class="icon-control" data-mind-zoom="in" title="확대" aria-label="확대">+</button>
+        <button class="ghost-btn compact-btn" data-mind-zoom="reset">100%</button>
+      </div><button class="ghost-btn" data-action="reset-mindmap-layout">자동정렬 초기화</button><button class="primary-btn" data-action="add-task">업무 추가</button>`
     );
     if (!state.tasks.length) {
       els.viewRoot.innerHTML = emptyState();
@@ -915,10 +972,12 @@
     layoutTree(tree);
     applySavedMindPositions(tree);
     const allNodes = flattenTree(tree);
-    const minX = Math.min(...allNodes.map((n) => n.x)) - 150;
-    const maxX = Math.max(...allNodes.map((n) => n.x)) + 150;
+    const minX = Math.min(-260, Math.min(...allNodes.map((n) => n.x)) - 180);
+    const maxX = Math.max(1080, Math.max(...allNodes.map((n) => n.x)) + 220);
     const maxY = Math.max(...allNodes.map((n) => n.y)) + 110;
     const viewBox = `${minX} 0 ${maxX - minX} ${maxY}`;
+    const svgWidth = Math.max(1200, maxX - minX);
+    const svgHeight = Math.max(640, maxY);
     const links = [];
     const nodes = [];
     walkTree(tree, (node) => {
@@ -926,8 +985,8 @@
       nodes.push(renderMindNode(node));
     });
     els.viewRoot.innerHTML = `
-      <div class="mindmap-shell">
-        <svg class="mindmap-svg" viewBox="${viewBox}" width="${Math.max(1200, maxX - minX)}" height="${Math.max(640, maxY)}">
+      <div class="mindmap-shell" data-mindmap-shell>
+        <svg class="mindmap-svg" viewBox="${viewBox}" width="${Math.round(svgWidth * zoom)}" height="${Math.round(svgHeight * zoom)}">
           ${links.join('')}
           ${nodes.join('')}
         </svg>
@@ -1043,6 +1102,7 @@
     $$('[data-mind-id]', svg).forEach((node) => {
       node.addEventListener('pointerdown', (event) => {
         if (event.button !== 0) return;
+        event.preventDefault();
         const id = node.dataset.mindId;
         const width = Number(node.dataset.mindWidth) || 140;
         const height = Number(node.dataset.mindHeight) || 46;
@@ -1054,6 +1114,7 @@
         node.classList.add('dragging');
 
         const onMove = (moveEvent) => {
+          moveEvent.preventDefault();
           const now = svgPoint(moveEvent);
           const dx = now.x - start.x;
           const dy = now.y - start.y;
@@ -1072,13 +1133,46 @@
             state.mindPositions = { ...(state.mindPositions || {}) };
             state.mindPositions[id] = { x: Math.round(latest.x), y: Math.round(latest.y) };
             queueBoardSettingsSave(true);
+            const shell = $('[data-mindmap-shell]', els.viewRoot);
+            const scrollLeft = shell?.scrollLeft || 0;
+            const scrollTop = shell?.scrollTop || 0;
             renderCurrentView();
+            requestAnimationFrame(() => {
+              const nextShell = $('[data-mindmap-shell]', els.viewRoot);
+              if (!nextShell) return;
+              nextShell.scrollLeft = scrollLeft;
+              nextShell.scrollTop = scrollTop;
+            });
           }
         };
         node.addEventListener('pointermove', onMove);
         node.addEventListener('pointerup', onUp);
         node.addEventListener('pointercancel', onUp);
       });
+    });
+  }
+
+  function setMindZoom(action) {
+    const current = normalizeMindZoom(state.mindZoom);
+    const next = action === 'in'
+      ? current + 0.15
+      : action === 'out'
+        ? current - 0.15
+        : 1;
+    const shell = $('[data-mindmap-shell]', els.viewRoot);
+    const oldZoom = current || 1;
+    const ratio = normalizeMindZoom(next) / oldZoom;
+    const scrollLeft = shell?.scrollLeft || 0;
+    const scrollTop = shell?.scrollTop || 0;
+    state.mindZoom = normalizeMindZoom(next);
+    scheduleSave();
+    queueBoardSettingsSave(true);
+    renderCurrentView();
+    requestAnimationFrame(() => {
+      const nextShell = $('[data-mindmap-shell]', els.viewRoot);
+      if (!nextShell) return;
+      nextShell.scrollLeft = Math.max(0, scrollLeft * ratio);
+      nextShell.scrollTop = Math.max(0, scrollTop * ratio);
     });
   }
 
@@ -1147,7 +1241,7 @@
         </div>
         <div class="timeline-right" style="min-width:${timelineWidth}px">
           <div class="timeline-axis timeline-axis-days" style="--day-count:${totalDays}">
-            ${dayMarks.map((d) => `<div class="timeline-day ${d.isMonthStart ? 'month-start' : ''}"><b>${escapeHtml(d.day)}</b><span>${escapeHtml(d.weekday)}</span>${d.isMonthStart ? `<em>${escapeHtml(d.month)}</em>` : ''}</div>`).join('')}
+            ${dayMarks.map((d) => `<div class="${escapeAttr(d.className)}" title="${escapeAttr(d.title)}"><b>${escapeHtml(d.day)}</b><span>${escapeHtml(d.weekday)}</span>${d.caption ? `<em>${escapeHtml(d.caption)}</em>` : ''}</div>`).join('')}
           </div>
           ${datedTasks.map((t) => renderTimelineRow(t, min, totalDays)).join('')}
         </div>
@@ -1181,11 +1275,15 @@
     const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
     let cursor = startOfDay(min);
     while (cursor <= max) {
+      const holidayName = koreanHolidayName(cursor);
+      const classes = ['timeline-day', dateToneClasses(cursor), cursor.getDate() === 1 ? 'month-start' : ''].filter(Boolean).join(' ');
       marks.push({
         day: `${cursor.getMonth() + 1}/${cursor.getDate()}`,
         weekday: weekdays[cursor.getDay()],
         month: `${cursor.getFullYear()}.${String(cursor.getMonth() + 1).padStart(2, '0')}`,
-        isMonthStart: cursor.getDate() === 1
+        caption: holidayName || (cursor.getDate() === 1 ? `${cursor.getFullYear()}.${String(cursor.getMonth() + 1).padStart(2, '0')}` : ''),
+        className: classes,
+        title: holidayName ? `${localDateKey(cursor)} ${holidayName}` : localDateKey(cursor)
       });
       cursor = addDays(cursor, 1);
     }
@@ -1214,7 +1312,15 @@
     const cursor = parseMonth(state.calendarDate);
     const gridStart = addDays(new Date(cursor.getFullYear(), cursor.getMonth(), 1), -mondayOffset(new Date(cursor.getFullYear(), cursor.getMonth(), 1)));
     const weeks = Array.from({ length: 6 }, (_, weekIndex) => Array.from({ length: 7 }, (_, dayIndex) => addDays(gridStart, weekIndex * 7 + dayIndex)));
-    const weekdayLabels = ['월', '화', '수', '목', '금', '토', '일'];
+    const weekdayLabels = [
+      { label: '월', className: '' },
+      { label: '화', className: '' },
+      { label: '수', className: '' },
+      { label: '목', className: '' },
+      { label: '금', className: '' },
+      { label: '토', className: 'saturday' },
+      { label: '일', className: 'sunday' }
+    ];
 
     els.viewRoot.innerHTML = `
       <div class="calendar-toolbar">
@@ -1225,10 +1331,10 @@
           <button class="ghost-btn" id="nextMonthBtn">다음 달</button>
         </div>
       </div>
-      <div class="calendar-board">
-        <div class="calendar-weekdays">
-          ${weekdayLabels.map((w) => `<div class="weekday">${w}</div>`).join('')}
-        </div>
+        <div class="calendar-board">
+          <div class="calendar-weekdays">
+          ${weekdayLabels.map((w) => `<div class="weekday ${w.className}">${w.label}</div>`).join('')}
+          </div>
         <div class="calendar-weeks">
           ${weeks.map((week) => renderCalendarWeek(week, cursor)).join('')}
         </div>
@@ -1251,9 +1357,12 @@
       <div class="calendar-week" style="--calendar-lanes:${laneCount}">
         ${week.map((day) => {
           const isOut = day.getMonth() !== cursor.getMonth();
+          const holidayName = koreanHolidayName(day);
+          const toneClasses = dateToneClasses(day);
           return `
-            <div class="calendar-day-shell ${isOut ? 'out-month' : ''}">
+            <div class="calendar-day-shell ${isOut ? 'out-month' : ''} ${toneClasses}" title="${escapeAttr(holidayName || localDateKey(day))}">
               <div class="day-number">${day.getDate()}</div>
+              ${holidayName ? `<div class="holiday-label">${escapeHtml(holidayName)}</div>` : ''}
             </div>
           `;
         }).join('')}
@@ -1695,6 +1804,36 @@
 
   function mondayOffset(date) {
     return (date.getDay() + 6) % 7;
+  }
+
+  function localDateKey(date) {
+    const d = startOfDay(date);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function koreanHolidayName(date) {
+    const key = localDateKey(date);
+    const yearly = KOREAN_HOLIDAYS_BY_YEAR[date.getFullYear()] || {};
+    return yearly[key] || FIXED_KOREAN_HOLIDAYS[key.slice(5)] || '';
+  }
+
+  function calendarTone(date) {
+    const holidayName = koreanHolidayName(date);
+    return {
+      holidayName,
+      isHoliday: Boolean(holidayName),
+      isSaturday: date.getDay() === 6,
+      isSunday: date.getDay() === 0
+    };
+  }
+
+  function dateToneClasses(date) {
+    const tone = calendarTone(date);
+    return [
+      tone.isHoliday ? 'holiday' : '',
+      tone.isSunday ? 'sunday' : '',
+      tone.isSaturday ? 'saturday' : ''
+    ].filter(Boolean).join(' ');
   }
 
   function toDateInput(date) {

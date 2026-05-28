@@ -162,8 +162,23 @@ button { cursor: pointer; }
   gap: 12px;
 }
 .view-header p { margin: 0; color: var(--muted); font-size: 13px; }
-.view-root { padding: 18px; min-height: 520px; overflow: auto; }
+.view-root { padding: 18px; min-height: 520px; overflow: auto; scrollbar-gutter: stable; }
 .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.compact-btn { min-height: 32px; padding: 0 12px; font-size: 12px; }
+.icon-control {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 900;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+.icon-control:hover { background: var(--blue-weak); border-color: #cbd7ff; }
 
 .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .summary-card {
@@ -274,6 +289,9 @@ button { cursor: pointer; }
   border-radius: 18px;
   overflow: auto;
   min-height: 640px;
+  max-height: calc(100vh - 240px);
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
 }
 .mindmap-svg { min-width: 100%; min-height: 640px; display: block; }
 .mind-node rect { filter: drop-shadow(0 7px 12px rgba(20, 30, 60, 0.08)); }
@@ -447,6 +465,23 @@ button { cursor: pointer; }
 .mind-node.dragging { cursor: grabbing; opacity: 0.92; }
 .mind-node.dragging rect { stroke-width: 2.8; filter: drop-shadow(0 14px 22px rgba(47, 92, 255, 0.20)); }
 .mindmap-shell { cursor: default; }
+.mindmap-toolbar {
+  min-height: 38px;
+  padding: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f7f9ff;
+}
+.mindmap-toolbar span {
+  min-width: 46px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--muted);
+}
 
 .timeline-daily .timeline-right { overflow: visible; }
 .timeline-axis-days {
@@ -468,6 +503,11 @@ button { cursor: pointer; }
 .timeline-day span { font-size: 11px; color: var(--muted); font-weight: 800; }
 .timeline-day em { font-size: 10px; color: var(--blue); font-style: normal; font-weight: 900; }
 .timeline-day.month-start { background: #edf2ff; box-shadow: inset 2px 0 0 var(--blue); }
+.timeline-day.saturday b, .timeline-day.saturday span { color: #2867c7; }
+.timeline-day.sunday b, .timeline-day.sunday span,
+.timeline-day.holiday b, .timeline-day.holiday span { color: #d83b45; }
+.timeline-day.holiday { background: #fff4f5; }
+.timeline-day.holiday em { color: #bd333c; }
 .timeline-daily .timeline-row { background-size: calc(100% / var(--day-count)) 100%; }
 
 .calendar-board {
@@ -487,6 +527,8 @@ button { cursor: pointer; }
   border-right: 1px solid var(--line);
   border-bottom: 0;
 }
+.calendar-weekdays .weekday.saturday { color: #2867c7; }
+.calendar-weekdays .weekday.sunday { color: #d83b45; }
 .calendar-weekdays .weekday:last-child { border-right: 0; }
 .calendar-weeks { display: grid; }
 .calendar-week {
@@ -507,6 +549,18 @@ button { cursor: pointer; }
 }
 .calendar-day-shell:nth-child(7) { border-right: 0; }
 .calendar-day-shell.out-month { background: #f8f9fc; color: #a7afbd; }
+.calendar-day-shell.saturday .day-number { color: #2867c7; }
+.calendar-day-shell.sunday .day-number,
+.calendar-day-shell.holiday .day-number { color: #d83b45; }
+.calendar-day-shell.holiday { background: #fff8f8; }
+.calendar-day-shell.out-month.holiday { background: #fff3f4; }
+.holiday-label {
+  margin-top: 4px;
+  color: #bd333c;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1.2;
+}
 .calendar-event-layer {
   position: absolute;
   left: 0;
