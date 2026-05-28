@@ -23,6 +23,8 @@
         <span id="userEmail" class="save-status"></span>
         <button class="ghost-btn" id="signOutBtn" hidden>로그아웃</button>
         <span id="saveStatus" class="save-status">저장됨</span>
+        <select id="tableSelect" class="table-select" aria-label="테이블 선택"></select>
+        <button class="ghost-btn" id="newTableBtn" title="레이블을 입력해 새 업무 테이블 생성">새 테이블</button>
         <button class="ghost-btn" id="resetDemoBtn" title="샘플 데이터로 다시 시작">샘플 복원</button>
         <button class="ghost-btn" id="exportBtn">JSON 내보내기</button>
         <label class="ghost-btn file-label" for="importFile">JSON 가져오기</label>
@@ -75,6 +77,25 @@
   </aside>
 
   <div id="modalBackdrop" class="modal-backdrop" hidden></div>
+  <section id="newTableModal" class="modal compact-modal" hidden aria-modal="true" role="dialog" aria-labelledby="newTableTitle">
+    <div class="modal-header">
+      <div>
+        <div class="eyebrow">새 테이블</div>
+        <h2 id="newTableTitle">업무 테이블 만들기</h2>
+      </div>
+      <button class="icon-btn" id="closeNewTableModal" aria-label="닫기">×</button>
+    </div>
+    <form id="newTableForm" class="modal-body">
+      <label class="field-label" for="newTableLabel">테이블 레이블</label>
+      <input id="newTableLabel" type="text" placeholder="예: LED 전광판 6월 실행표" maxlength="60" autocomplete="off" />
+      <p class="field-hint">새 테이블은 기존 업무와 분리되어 마인드맵, 칸반, 타임라인, 캘린더를 따로 관리합니다.</p>
+      <div class="modal-actions">
+        <button type="button" class="ghost-btn" id="cancelNewTableBtn">취소</button>
+        <button type="submit" class="primary-btn" id="createNewTableConfirmBtn">생성</button>
+      </div>
+    </form>
+  </section>
+
   <section id="shareModal" class="modal" hidden aria-modal="true" role="dialog">
     <div class="modal-header">
       <div>

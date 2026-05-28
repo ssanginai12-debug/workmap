@@ -91,6 +91,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .board-title-input:focus { color: var(--blue); }
 .topbar-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
 .save-status { color: var(--muted); font-size: 13px; padding-right: 4px; }
+.table-select {
+  min-height: 38px;
+  max-width: 240px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 34px 0 14px;
+  outline: none;
+}
+.table-select:focus { border-color: #9eb3ff; box-shadow: 0 0 0 3px rgba(47, 92, 255, 0.12); }
 
 .primary-btn, .ghost-btn, .icon-btn, .mini-btn {
   border: 1px solid transparent;
@@ -457,9 +470,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   box-shadow: 0 30px 80px rgba(10, 18, 35, 0.25);
   border: 1px solid var(--line);
 }
+.compact-modal { width: min(480px, calc(100vw - 30px)); }
 .modal-header { padding: 22px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: flex-start; }
 .modal-header h2 { margin: 5px 0 0; }
 .modal-body { padding: 22px; display: grid; gap: 16px; }
+.field-label { color: var(--muted); font-size: 12px; font-weight: 900; }
+.field-hint { margin: -6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .share-note { border: 1px solid #d8e1ff; background: var(--blue-weak); color: #253d88; border-radius: 18px; padding: 14px; line-height: 1.55; font-size: 13px; }
 .invite-row { display: grid; grid-template-columns: 1fr 150px auto; gap: 8px; }
 .member-list { display: flex; flex-direction: column; gap: 8px; }
@@ -475,6 +492,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (max-width: 1050px) {
   .topbar { align-items: flex-start; flex-direction: column; }
   .topbar-actions { justify-content: flex-start; }
+  .table-select { max-width: min(100%, 280px); }
   .layout { grid-template-columns: 1fr; }
   .sidebar { display: grid; grid-template-columns: repeat(3, 1fr); }
   .help-panel { display: none; }

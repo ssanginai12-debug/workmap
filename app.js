@@ -1,5 +1,7 @@
 (() => {
   const STORAGE_KEY = 'workmap_mvp_state_v1';
+  const LOCAL_TABLES_KEY = 'workmap_local_tables_v1';
+  const LOCAL_CURRENT_TABLE_KEY = 'workmap_local_current_table_v1';
   const CLOUD_VIEW_KEY = 'workmap_cloud_view_v1';
   const CLOUD_BOARD_KEY = 'workmap_cloud_board_v1';
   const CLOUD_BOARD_SETTINGS_FALLBACK_KEY = 'workmap_cloud_board_settings_v2';
@@ -65,11 +67,13 @@
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
+  let currentLocalTableId = localStorage.getItem(LOCAL_CURRENT_TABLE_KEY) || '';
   let state = getInitialState();
   let selectedTaskId = null;
   let saveTimer = null;
   let currentUser = null;
   let currentBoardId = null;
+  let availableCloudBoards = [];
   let realtimeChannel = null;
   let applyingRemoteChange = false;
   const pendingCloudTaskTimers = new Map();
@@ -101,7 +105,10 @@
     authScreen: $('#authScreen'),
     authEmail: $('#authEmail'),
     authPassword: $('#authPassword'),
-    authMessage: $('#authMessage')
+    authMessage: $('#authMessage'),
+    tableSelect: $('#tableSelect'),
+    newTableModal: $('#newTableModal'),
+    newTableLabel: $('#newTableLabel')
   };
 
   init();
@@ -261,13 +268,18 @@
     if (!board) {
       const { data: boards, error } = await supabaseClient.from('boards').select('*').order('updated_at', { ascending: false });
       if (error) throw error;
+      availableCloudBoards = boards || [];
       board = boards?.[0] || null;
     }
     if (!board) {
       const { data: created, error } = await supabaseClient.from('boards').insert({ title: demoState().boardName }).select('*').single();
       if (error) throw error;
       board = created;
+      availableCloudBoards = [created];
       await seedDemoTasks(board.id);
+    }
+    if (board && !availableCloudBoards.some((item) => item.id === board.id)) {
+      availableCloudBoards.unshift(board);
     }
     currentBoardId = board.id;
     localStorage.setItem(CLOUD_BOARD_KEY, currentBoardId);
@@ -519,11 +531,58 @@
   function getInitialState() {
     const shared = loadSharedStateFromHash();
     if (shared) return normalizeState(shared);
+    const localTables = getLocalTables();
+    const selectedTable = currentLocalTableId && localTables[currentLocalTableId];
+    if (selectedTable) return normalizeState(selectedTable);
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      try { return normalizeState(JSON.parse(saved)); } catch (_) {}
+      try {
+        const parsed = normalizeState(JSON.parse(saved));
+        if (!currentLocalTableId) {
+          currentLocalTableId = uid();
+          localStorage.setItem(LOCAL_CURRENT_TABLE_KEY, currentLocalTableId);
+          saveLocalTableState(parsed);
+        }
+        return parsed;
+      } catch (_) {}
     }
-    return demoState();
+    const initial = demoState();
+    if (!currentLocalTableId) {
+      currentLocalTableId = uid();
+      localStorage.setItem(LOCAL_CURRENT_TABLE_KEY, currentLocalTableId);
+    }
+    saveLocalTableState(initial);
+    return initial;
+  }
+
+  function getLocalTables() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(LOCAL_TABLES_KEY) || '{}');
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function saveLocalTableState(nextState = state) {
+    if (!currentLocalTableId) return;
+    const tables = getLocalTables();
+    tables[currentLocalTableId] = normalizeState(nextState);
+    localStorage.setItem(LOCAL_TABLES_KEY, JSON.stringify(tables));
+    localStorage.setItem(LOCAL_CURRENT_TABLE_KEY, currentLocalTableId);
+  }
+
+  function blankState(label) {
+    return normalizeState({
+      boardName: label,
+      view: 'table',
+      calendarDate: localDateKey(new Date()).slice(0, 8) + '01',
+      statuses: DEFAULT_STATUSES.slice(),
+      mindPositions: {},
+      mindZoom: 1,
+      members: [],
+      tasks: []
+    });
   }
 
   function demoState() {
@@ -622,8 +681,15 @@
   function bindGlobalEvents() {
     els.boardTitle.addEventListener('input', (e) => {
       state.boardName = e.target.value.trim() || '무제 보드';
+      if (CLOUD_ENABLED && currentBoardId) {
+        const board = availableCloudBoards.find((item) => item.id === currentBoardId);
+        if (board) board.title = state.boardName;
+      } else {
+        saveLocalTableState(state);
+      }
       scheduleSave();
       queueBoardTitleSave();
+      renderTableSelect();
       renderSummary();
       if (state.view === 'mindmap') renderCurrentView();
     });
@@ -640,12 +706,20 @@
     $('#closeDrawer').addEventListener('click', closeDrawer);
     $('#shareBtn').addEventListener('click', openShareModal);
     $('#closeShareModal').addEventListener('click', closeShareModal);
-    els.modalBackdrop.addEventListener('click', closeShareModal);
+    els.modalBackdrop.addEventListener('click', closeAllModals);
     $('#addMemberBtn').addEventListener('click', addMemberFromModal);
     $('#makeShareLinkBtn').addEventListener('click', makeShareLink);
     $('#copyShareLinkBtn').addEventListener('click', copyShareLink);
     $('#exportBtn').addEventListener('click', exportJson);
     $('#importFile').addEventListener('change', importJson);
+    $('#newTableBtn')?.addEventListener('click', openNewTableModal);
+    $('#closeNewTableModal')?.addEventListener('click', closeNewTableModal);
+    $('#cancelNewTableBtn')?.addEventListener('click', closeNewTableModal);
+    $('#newTableForm')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      createNewTable(els.newTableLabel?.value);
+    });
+    els.tableSelect?.addEventListener('change', switchTable);
     $('#resetDemoBtn').addEventListener('click', async () => {
       if (!confirm('현재 데이터를 샘플 데이터로 덮어쓸까요?')) return;
       if (CLOUD_ENABLED && currentBoardId) {
@@ -696,13 +770,102 @@
     });
   }
 
+  async function createNewTable(label) {
+    const tableLabel = String(label || '').trim();
+    if (!tableLabel) return;
+    closeDrawer();
+    closeNewTableModal();
+    if (CLOUD_ENABLED && currentUser) {
+      try {
+        els.saveStatus.textContent = '새 테이블 생성 중…';
+        const { data: board, error } = await supabaseClient
+          .from('boards')
+          .insert({ title: tableLabel, settings: { statuses: DEFAULT_STATUSES.slice(), mindPositions: {}, mindZoom: 1 } })
+          .select('*')
+          .single();
+        if (error) throw error;
+        currentBoardId = board.id;
+        availableCloudBoards = [board, ...availableCloudBoards.filter((item) => item.id !== board.id)];
+        localStorage.setItem(CLOUD_BOARD_KEY, currentBoardId);
+        state = blankState(tableLabel);
+        await loadCloudBoard(currentBoardId);
+        await subscribeToBoardRealtime();
+        els.saveStatus.textContent = '새 테이블 생성됨';
+        render();
+        return;
+      } catch (err) {
+        console.error(err);
+        alert('새 테이블 생성에 실패했습니다. Supabase 권한 또는 settings 컬럼을 확인하세요.');
+        els.saveStatus.textContent = '새 테이블 생성 실패';
+        return;
+      }
+    }
+    scheduleSave(true);
+    currentLocalTableId = uid();
+    state = blankState(tableLabel);
+    saveLocalTableState(state);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    selectedTaskId = null;
+    els.saveStatus.textContent = '새 테이블 생성됨';
+    render();
+  }
+
+  async function switchTable(e) {
+    const tableId = e.target.value;
+    if (!tableId) return;
+    closeDrawer();
+    if (CLOUD_ENABLED && currentUser) {
+      try {
+        els.saveStatus.textContent = '테이블 전환 중…';
+        currentBoardId = tableId;
+        localStorage.setItem(CLOUD_BOARD_KEY, currentBoardId);
+        await loadCloudBoard(currentBoardId);
+        await subscribeToBoardRealtime();
+        els.saveStatus.textContent = '테이블 전환됨';
+        render();
+      } catch (err) {
+        console.error(err);
+        alert('테이블을 불러오지 못했습니다.');
+        els.saveStatus.textContent = '테이블 전환 실패';
+      }
+      return;
+    }
+    scheduleSave(true);
+    const tables = getLocalTables();
+    if (!tables[tableId]) return;
+    currentLocalTableId = tableId;
+    localStorage.setItem(LOCAL_CURRENT_TABLE_KEY, currentLocalTableId);
+    state = normalizeState(tables[tableId]);
+    selectedTaskId = null;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    els.saveStatus.textContent = '테이블 전환됨';
+    render();
+  }
+
   function render() {
     els.boardTitle.value = state.boardName;
+    renderTableSelect();
     $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.view === state.view));
     renderSummary();
     renderCategoryList();
     renderCurrentView();
     renderDrawer();
+  }
+
+  function renderTableSelect() {
+    if (!els.tableSelect) return;
+    const options = CLOUD_ENABLED && currentUser
+      ? availableCloudBoards.map((board) => ({ id: board.id, label: board.title || '무제 테이블' }))
+      : Object.entries(getLocalTables()).map(([id, table]) => ({ id, label: table.boardName || '무제 테이블' }));
+    const currentId = CLOUD_ENABLED && currentUser ? currentBoardId : currentLocalTableId;
+    if (!options.length) {
+      els.tableSelect.hidden = true;
+      return;
+    }
+    els.tableSelect.hidden = false;
+    els.tableSelect.innerHTML = options
+      .map((item) => `<option value="${escapeAttr(item.id)}" ${item.id === currentId ? 'selected' : ''}>${escapeHtml(item.label)}</option>`)
+      .join('');
   }
 
   function renderCurrentView() {
@@ -1227,6 +1390,17 @@
       });
     };
     if (shell) {
+      shell.addEventListener('wheel', (event) => {
+        event.preventDefault();
+        const current = normalizeMindZoom(state.mindZoom);
+        const next = normalizeMindZoom(current + (event.deltaY < 0 ? 0.08 : -0.08));
+        applyMindZoom(next, {
+          clientX: event.clientX,
+          clientY: event.clientY,
+          saveImmediately: false
+        });
+      }, { passive: false });
+
       shell.addEventListener('pointerdown', (event) => {
         if (event.button !== 0 || event.target.closest('.mind-node')) return;
         const start = { x: event.clientX, y: event.clientY, left: shell.scrollLeft, top: shell.scrollTop };
@@ -1314,20 +1488,31 @@
       : action === 'out'
         ? current - 0.15
         : 1;
+    applyMindZoom(normalizeMindZoom(next), { saveImmediately: true });
+  }
+
+  function applyMindZoom(nextZoom, options = {}) {
+    const oldZoom = normalizeMindZoom(state.mindZoom);
+    const normalizedNext = normalizeMindZoom(nextZoom);
+    if (normalizedNext === oldZoom) return;
     const shell = $('[data-mindmap-shell]', els.viewRoot);
-    const oldZoom = current || 1;
-    const ratio = normalizeMindZoom(next) / oldZoom;
+    const rect = shell?.getBoundingClientRect();
     const scrollLeft = shell?.scrollLeft || 0;
     const scrollTop = shell?.scrollTop || 0;
-    state.mindZoom = normalizeMindZoom(next);
+    const anchorX = rect && Number.isFinite(options.clientX) ? options.clientX - rect.left : 0;
+    const anchorY = rect && Number.isFinite(options.clientY) ? options.clientY - rect.top : 0;
+    const contentX = scrollLeft + anchorX;
+    const contentY = scrollTop + anchorY;
+    const ratio = normalizedNext / (oldZoom || 1);
+    state.mindZoom = normalizedNext;
     scheduleSave();
-    queueBoardSettingsSave(true);
+    queueBoardSettingsSave(options.saveImmediately !== false);
     renderCurrentView();
     requestAnimationFrame(() => {
       const nextShell = $('[data-mindmap-shell]', els.viewRoot);
       if (!nextShell) return;
-      nextShell.scrollLeft = Math.max(0, scrollLeft * ratio);
-      nextShell.scrollTop = Math.max(0, scrollTop * ratio);
+      nextShell.scrollLeft = Math.max(0, contentX * ratio - anchorX);
+      nextShell.scrollTop = Math.max(0, contentY * ratio - anchorY);
     });
   }
 
@@ -1766,6 +1951,7 @@
     const doSave = () => {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        if (!CLOUD_ENABLED) saveLocalTableState(state);
         els.saveStatus.textContent = '저장됨';
       } catch (err) {
         els.saveStatus.textContent = '저장 실패';
@@ -1777,14 +1963,35 @@
   }
 
   function openShareModal() {
+    closeNewTableModal(false);
     renderShareModal();
     els.modalBackdrop.hidden = false;
     els.shareModal.hidden = false;
   }
 
-  function closeShareModal() {
-    els.modalBackdrop.hidden = true;
+  function closeShareModal(hideBackdrop = true) {
     els.shareModal.hidden = true;
+    if (hideBackdrop && els.newTableModal?.hidden) els.modalBackdrop.hidden = true;
+  }
+
+  function openNewTableModal() {
+    closeShareModal(false);
+    if (els.newTableLabel) els.newTableLabel.value = '';
+    els.modalBackdrop.hidden = false;
+    els.newTableModal.hidden = false;
+    requestAnimationFrame(() => els.newTableLabel?.focus());
+  }
+
+  function closeNewTableModal(hideBackdrop = true) {
+    if (!els.newTableModal) return;
+    els.newTableModal.hidden = true;
+    if (hideBackdrop && els.shareModal?.hidden) els.modalBackdrop.hidden = true;
+  }
+
+  function closeAllModals() {
+    closeShareModal(false);
+    closeNewTableModal(false);
+    els.modalBackdrop.hidden = true;
   }
 
   function renderShareModal() {
