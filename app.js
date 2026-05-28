@@ -837,6 +837,11 @@
         deleteKanbanColumn(deleteStatusButton.dataset.deleteStatus);
         return;
       }
+      const deleteCategoryButton = e.target.closest('[data-delete-category]');
+      if (deleteCategoryButton) {
+        deleteCategory(deleteCategoryButton.dataset.deleteCategory);
+        return;
+      }
       const addTaskButton = e.target.closest('[data-action="add-task"]');
       if (addTaskButton) {
         addTask(addTaskButton.dataset.status || '남은 카드');
@@ -1114,9 +1119,48 @@
     els.categoryList.innerHTML = categories.map((cat) => `
       <div class="category-pill">
         <span>${escapeHtml(cat)}</span>
-        <small>${counts.get(cat) || 0}</small>
+        <div class="category-pill-actions">
+          <small>${counts.get(cat) || 0}</small>
+          ${canDeleteCategory(cat) ? `<button class="category-delete-btn" title="분류 삭제" aria-label="${escapeAttr(cat)} 분류 삭제" data-delete-category="${escapeAttr(cat)}">×</button>` : ''}
+        </div>
       </div>
     `).join('');
+  }
+
+  function canDeleteCategory(category) {
+    return Boolean(category && category !== '기타' && !CATEGORIES.includes(category));
+  }
+
+  async function deleteCategory(category) {
+    if (!canDeleteCategory(category)) {
+      alert('기본 분류는 삭제할 수 없습니다.');
+      return;
+    }
+    const affected = state.tasks.filter((task) => task.category === category);
+    const message = affected.length
+      ? `'${category}' 분류를 삭제하고, 이 분류의 업무 ${affected.length}개를 '기타'로 이동할까요?`
+      : `'${category}' 분류를 삭제할까요?`;
+    if (!confirm(message)) return;
+
+    if (CLOUD_ENABLED && currentBoardId && affected.length) {
+      const { error } = await supabaseClient
+        .from('tasks')
+        .update({ category: '기타' })
+        .eq('board_id', currentBoardId)
+        .eq('category', category);
+      if (error) {
+        console.error(error);
+        alert('분류 삭제에 실패했습니다.');
+        return;
+      }
+    }
+
+    affected.forEach((task) => {
+      task.category = '기타';
+      task.updatedAt = new Date().toISOString();
+    });
+    scheduleSave(true);
+    render();
   }
 
   function setHeader(title, subtitle, actions = '') {

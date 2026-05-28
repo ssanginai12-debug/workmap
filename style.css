@@ -69,6 +69,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: linear-gradient(145deg, #1b46ff, #70a0ff);
   box-shadow: 0 12px 24px rgba(47, 92, 255, 0.22);
 }
+.brand-logo {
+  width: 54px;
+  height: 54px;
+  object-fit: contain;
+  display: block;
+  filter: drop-shadow(0 10px 18px rgba(20, 43, 75, 0.16));
+}
 .eyebrow {
   color: var(--muted);
   font-size: 12px;
@@ -230,6 +237,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 10px;
   border: 1px solid var(--line);
   background: #fff;
   border-radius: 14px;
@@ -237,7 +245,26 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   font-size: 13px;
   font-weight: 800;
 }
+.category-pill span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .category-pill small { color: var(--muted); }
+.category-pill-actions { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.category-delete-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #ffd3d7;
+  border-radius: 999px;
+  background: var(--red-weak);
+  color: #bd333c;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+}
+.category-delete-btn:hover { filter: brightness(0.97); transform: translateY(-1px); }
 
 .data-table-wrap { overflow: auto; max-height: 68vh; border: 1px solid var(--line); border-radius: 14px; background: #fff; scrollbar-gutter: stable; }
 .data-table { width: 100%; min-width: 1180px; border-collapse: separate; border-spacing: 0; }
