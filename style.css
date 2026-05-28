@@ -56,7 +56,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   backdrop-filter: blur(18px);
   border-bottom: 1px solid rgba(229, 233, 242, 0.9);
 }
-.brand-block { display: flex; align-items: center; gap: 14px; min-width: 320px; }
+.brand-block { display: flex; align-items: center; gap: 14px; min-width: 320px; flex: 1 1 420px; }
 .app-mark {
   width: 44px;
   height: 44px;
@@ -65,7 +65,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   place-items: center;
   color: #fff;
   font-weight: 800;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   background: linear-gradient(145deg, #1b46ff, #70a0ff);
   box-shadow: 0 12px 24px rgba(47, 92, 255, 0.22);
 }
@@ -91,7 +91,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .board-title-input:focus { color: var(--blue); }
 .topbar-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
 .save-status { color: var(--muted); font-size: 13px; padding-right: 4px; }
-.table-select {
+.project-select {
   min-height: 38px;
   max-width: 240px;
   border: 1px solid var(--line);
@@ -103,7 +103,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   padding: 0 34px 0 14px;
   outline: none;
 }
-.table-select:focus { border-color: #9eb3ff; box-shadow: 0 0 0 3px rgba(47, 92, 255, 0.12); }
+.project-select:focus { border-color: #9eb3ff; box-shadow: 0 0 0 3px rgba(47, 92, 255, 0.12); }
 
 .primary-btn, .ghost-btn, .icon-btn, .mini-btn {
   border: 1px solid transparent;
@@ -118,6 +118,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .primary-btn:hover { transform: translateY(-1px); box-shadow: 0 14px 28px rgba(47, 92, 255, 0.25); }
 .ghost-btn, .mini-btn { background: #fff; border-color: var(--line); color: var(--text); }
 .ghost-btn:hover, .mini-btn:hover { background: var(--blue-weak); border-color: #cbd7ff; }
+.danger-soft-btn { color: #bd333c; border-color: #ffd3d7; background: #fff8f9; }
+.danger-soft-btn:hover { background: var(--red-weak); border-color: #ffb6bf; }
 .icon-btn {
   width: 38px;
   padding: 0;
@@ -492,7 +494,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (max-width: 1050px) {
   .topbar { align-items: flex-start; flex-direction: column; }
   .topbar-actions { justify-content: flex-start; }
-  .table-select { max-width: min(100%, 280px); }
+  .project-select { max-width: min(100%, 280px); }
   .layout { grid-template-columns: 1fr; }
   .sidebar { display: grid; grid-template-columns: repeat(3, 1fr); }
   .help-panel { display: none; }

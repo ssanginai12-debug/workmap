@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>업무맵 Cloud MVP - 로그인/초대/DB/실시간 동기화</title>
-  <meta name="description" content="테이블 하나를 원본으로 마인드맵, 칸반, 타임라인, 캘린더가 자동 동기화되는 웹앱 MVP" />
+  <meta name="description" content="프로젝트 하나를 원본으로 마인드맵, 칸반, 타임라인, 캘린더가 자동 동기화되는 웹앱 MVP" />
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -14,8 +14,8 @@
       <div class="brand-block">
         <div class="app-mark">WM</div>
         <div>
-          <div class="eyebrow">Table-driven Work Map</div>
-          <input id="boardTitle" class="board-title-input" aria-label="보드명" />
+          <div class="eyebrow">Project-driven Work Map</div>
+          <input id="boardTitle" class="board-title-input" aria-label="프로젝트명" placeholder="프로젝트명" />
         </div>
       </div>
       <div class="topbar-actions">
@@ -23,8 +23,9 @@
         <span id="userEmail" class="save-status"></span>
         <button class="ghost-btn" id="signOutBtn" hidden>로그아웃</button>
         <span id="saveStatus" class="save-status">저장됨</span>
-        <select id="tableSelect" class="table-select" aria-label="테이블 선택"></select>
-        <button class="ghost-btn" id="newTableBtn" title="레이블을 입력해 새 업무 테이블 생성">새 테이블</button>
+        <select id="tableSelect" class="project-select" aria-label="프로젝트 선택"></select>
+        <button class="ghost-btn" id="newTableBtn" title="프로젝트명을 입력해 새 프로젝트 생성">신규 프로젝트</button>
+        <button class="ghost-btn danger-soft-btn" id="deleteProjectBtn" title="현재 프로젝트 삭제">프로젝트 삭제</button>
         <button class="ghost-btn" id="resetDemoBtn" title="샘플 데이터로 다시 시작">샘플 복원</button>
         <button class="ghost-btn" id="exportBtn">JSON 내보내기</button>
         <label class="ghost-btn file-label" for="importFile">JSON 가져오기</label>
@@ -44,7 +45,7 @@
     <main class="layout">
       <aside class="sidebar">
         <div class="panel">
-          <h2>보드 요약</h2>
+          <h2>프로젝트 요약</h2>
           <div id="summaryCards" class="summary-grid"></div>
         </div>
         <div class="panel">
@@ -53,8 +54,8 @@
         </div>
         <div class="panel help-panel">
           <h2>동기화 원리</h2>
-          <p>모든 화면은 <b>같은 업무 테이블</b>을 바라봅니다.</p>
-          <p>테이블에서 날짜를 바꾸면 타임라인/캘린더가 바뀌고, 칸반에서 카드를 옮기면 상태가 바뀝니다.</p>
+          <p>모든 화면은 <b>같은 프로젝트 데이터</b>를 바라봅니다.</p>
+          <p>업무 테이블에서 날짜를 바꾸면 타임라인/캘린더가 바뀌고, 칸반에서 카드를 옮기면 상태가 바뀝니다.</p>
         </div>
       </aside>
 
@@ -80,15 +81,15 @@
   <section id="newTableModal" class="modal compact-modal" hidden aria-modal="true" role="dialog" aria-labelledby="newTableTitle">
     <div class="modal-header">
       <div>
-        <div class="eyebrow">새 테이블</div>
-        <h2 id="newTableTitle">업무 테이블 만들기</h2>
+        <div class="eyebrow">신규 프로젝트</div>
+        <h2 id="newTableTitle">프로젝트 만들기</h2>
       </div>
       <button class="icon-btn" id="closeNewTableModal" aria-label="닫기">×</button>
     </div>
     <form id="newTableForm" class="modal-body">
-      <label class="field-label" for="newTableLabel">테이블 레이블</label>
-      <input id="newTableLabel" type="text" placeholder="예: LED 전광판 6월 실행표" maxlength="60" autocomplete="off" />
-      <p class="field-hint">새 테이블은 기존 업무와 분리되어 마인드맵, 칸반, 타임라인, 캘린더를 따로 관리합니다.</p>
+      <label class="field-label" for="newTableLabel">프로젝트명</label>
+      <input id="newTableLabel" type="text" placeholder="예: LED 전광판 6월 실행 계획" maxlength="60" autocomplete="off" />
+      <p class="field-hint">신규 프로젝트는 기존 업무와 분리되어 마인드맵, 칸반, 타임라인, 캘린더를 따로 관리합니다.</p>
       <div class="modal-actions">
         <button type="button" class="ghost-btn" id="cancelNewTableBtn">취소</button>
         <button type="submit" class="primary-btn" id="createNewTableConfirmBtn">생성</button>
@@ -131,7 +132,7 @@
     <div class="empty-state">
       <div class="empty-icon">＋</div>
       <h3>아직 업무가 없습니다.</h3>
-      <p>테이블에서 업무를 추가하면 마인드맵, 칸반, 타임라인, 캘린더가 자동으로 생성됩니다.</p>
+      <p>프로젝트에 업무를 추가하면 마인드맵, 칸반, 타임라인, 캘린더가 자동으로 생성됩니다.</p>
       <button class="primary-btn" data-action="add-task">업무 추가</button>
     </div>
   </template>

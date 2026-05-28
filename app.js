@@ -295,14 +295,20 @@
     if (boardError) throw boardError;
     if (tasksError) throw tasksError;
     if (membersError) throw membersError;
+    const projectTitle = normalizeProjectName(board.title);
     state = normalizeState({
-      boardName: board.title,
+      boardName: projectTitle,
       view: localStorage.getItem(CLOUD_VIEW_KEY) || state.view || 'table',
       calendarDate: state.calendarDate || '2026-05-01',
       members: (members || []).map(memberFromRow),
       tasks: (tasks || []).map(taskFromRow),
       settings: mergeBoardSettings(loadLocalBoardSettings(boardId), board.settings)
     });
+    const boardOption = availableCloudBoards.find((item) => item.id === boardId);
+    if (boardOption) boardOption.title = projectTitle;
+    if (board.title !== projectTitle) {
+      await supabaseClient.from('boards').update({ title: projectTitle }).eq('id', boardId);
+    }
   }
 
   async function resetCloudDemo() {
@@ -574,7 +580,7 @@
 
   function blankState(label) {
     return normalizeState({
-      boardName: label,
+      boardName: normalizeProjectName(label),
       view: 'table',
       calendarDate: localDateKey(new Date()).slice(0, 8) + '01',
       statuses: DEFAULT_STATUSES.slice(),
@@ -587,7 +593,7 @@
 
   function demoState() {
     return {
-      boardName: 'LED 전광판 사업 진행 상황',
+      boardName: 'LED전광판 사업 진행 현황',
       view: 'table',
       calendarDate: '2026-05-01',
       statuses: DEFAULT_STATUSES.slice(),
@@ -622,7 +628,7 @@
     const base = demoState();
     const settings = mergeBoardSettings(raw.settings, raw);
     const clean = {
-      boardName: raw.boardName || base.boardName,
+      boardName: normalizeProjectName(raw.boardName || base.boardName),
       view: raw.view || 'table',
       calendarDate: raw.calendarDate || '2026-05-01',
       statuses: Array.isArray(settings.statuses) ? settings.statuses : base.statuses.slice(),
@@ -680,7 +686,7 @@
 
   function bindGlobalEvents() {
     els.boardTitle.addEventListener('input', (e) => {
-      state.boardName = e.target.value.trim() || '무제 보드';
+      state.boardName = normalizeProjectName(e.target.value);
       if (CLOUD_ENABLED && currentBoardId) {
         const board = availableCloudBoards.find((item) => item.id === currentBoardId);
         if (board) board.title = state.boardName;
@@ -713,6 +719,7 @@
     $('#exportBtn').addEventListener('click', exportJson);
     $('#importFile').addEventListener('change', importJson);
     $('#newTableBtn')?.addEventListener('click', openNewTableModal);
+    $('#deleteProjectBtn')?.addEventListener('click', deleteCurrentProject);
     $('#closeNewTableModal')?.addEventListener('click', closeNewTableModal);
     $('#cancelNewTableBtn')?.addEventListener('click', closeNewTableModal);
     $('#newTableForm')?.addEventListener('submit', (e) => {
@@ -771,13 +778,13 @@
   }
 
   async function createNewTable(label) {
-    const tableLabel = String(label || '').trim();
+    const tableLabel = normalizeProjectName(label);
     if (!tableLabel) return;
     closeDrawer();
     closeNewTableModal();
     if (CLOUD_ENABLED && currentUser) {
       try {
-        els.saveStatus.textContent = '새 테이블 생성 중…';
+        els.saveStatus.textContent = '새 프로젝트 생성 중…';
         const { data: board, error } = await supabaseClient
           .from('boards')
           .insert({ title: tableLabel, settings: { statuses: DEFAULT_STATUSES.slice(), mindPositions: {}, mindZoom: 1 } })
@@ -790,13 +797,13 @@
         state = blankState(tableLabel);
         await loadCloudBoard(currentBoardId);
         await subscribeToBoardRealtime();
-        els.saveStatus.textContent = '새 테이블 생성됨';
+        els.saveStatus.textContent = '새 프로젝트 생성됨';
         render();
         return;
       } catch (err) {
         console.error(err);
-        alert('새 테이블 생성에 실패했습니다. Supabase 권한 또는 settings 컬럼을 확인하세요.');
-        els.saveStatus.textContent = '새 테이블 생성 실패';
+        alert('새 프로젝트 생성에 실패했습니다. Supabase 권한 또는 settings 컬럼을 확인하세요.');
+        els.saveStatus.textContent = '새 프로젝트 생성 실패';
         return;
       }
     }
@@ -806,7 +813,7 @@
     saveLocalTableState(state);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     selectedTaskId = null;
-    els.saveStatus.textContent = '새 테이블 생성됨';
+    els.saveStatus.textContent = '새 프로젝트 생성됨';
     render();
   }
 
@@ -816,17 +823,17 @@
     closeDrawer();
     if (CLOUD_ENABLED && currentUser) {
       try {
-        els.saveStatus.textContent = '테이블 전환 중…';
+        els.saveStatus.textContent = '프로젝트 전환 중…';
         currentBoardId = tableId;
         localStorage.setItem(CLOUD_BOARD_KEY, currentBoardId);
         await loadCloudBoard(currentBoardId);
         await subscribeToBoardRealtime();
-        els.saveStatus.textContent = '테이블 전환됨';
+        els.saveStatus.textContent = '프로젝트 전환됨';
         render();
       } catch (err) {
         console.error(err);
-        alert('테이블을 불러오지 못했습니다.');
-        els.saveStatus.textContent = '테이블 전환 실패';
+        alert('프로젝트를 불러오지 못했습니다.');
+        els.saveStatus.textContent = '프로젝트 전환 실패';
       }
       return;
     }
@@ -838,7 +845,63 @@
     state = normalizeState(tables[tableId]);
     selectedTaskId = null;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    els.saveStatus.textContent = '테이블 전환됨';
+    els.saveStatus.textContent = '프로젝트 전환됨';
+    render();
+  }
+
+  async function deleteCurrentProject() {
+    const projectName = normalizeProjectName(state.boardName);
+    if (!confirm(`현재 프로젝트 "${projectName}"를 삭제할까요?\n\n이 프로젝트의 업무, 마인드맵 위치, 칸반 설정이 함께 삭제됩니다.`)) return;
+    closeDrawer();
+
+    if (CLOUD_ENABLED && currentUser && currentBoardId) {
+      try {
+        els.saveStatus.textContent = '프로젝트 삭제 중…';
+        const deletingId = currentBoardId;
+        const { error } = await supabaseClient.from('boards').delete().eq('id', deletingId);
+        if (error) throw error;
+        availableCloudBoards = availableCloudBoards.filter((board) => board.id !== deletingId);
+
+        if (!availableCloudBoards.length) {
+          const { data: created, error: createError } = await supabaseClient
+            .from('boards')
+            .insert({ title: '새 프로젝트', settings: { statuses: DEFAULT_STATUSES.slice(), mindPositions: {}, mindZoom: 1 } })
+            .select('*')
+            .single();
+          if (createError) throw createError;
+          availableCloudBoards = [created];
+        }
+
+        currentBoardId = availableCloudBoards[0].id;
+        localStorage.setItem(CLOUD_BOARD_KEY, currentBoardId);
+        selectedTaskId = null;
+        await loadCloudBoard(currentBoardId);
+        await subscribeToBoardRealtime();
+        els.saveStatus.textContent = '프로젝트 삭제됨';
+        render();
+      } catch (err) {
+        console.error(err);
+        alert('프로젝트 삭제에 실패했습니다. 관리자 권한을 확인하세요.');
+        els.saveStatus.textContent = '프로젝트 삭제 실패';
+      }
+      return;
+    }
+
+    const tables = getLocalTables();
+    delete tables[currentLocalTableId];
+    let ids = Object.keys(tables);
+    if (!ids.length) {
+      const fallbackId = uid();
+      tables[fallbackId] = blankState('새 프로젝트');
+      ids = [fallbackId];
+    }
+    currentLocalTableId = ids[0];
+    localStorage.setItem(LOCAL_TABLES_KEY, JSON.stringify(tables));
+    localStorage.setItem(LOCAL_CURRENT_TABLE_KEY, currentLocalTableId);
+    state = normalizeState(tables[currentLocalTableId]);
+    selectedTaskId = null;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    els.saveStatus.textContent = '프로젝트 삭제됨';
     render();
   }
 
@@ -855,9 +918,14 @@
   function renderTableSelect() {
     if (!els.tableSelect) return;
     const options = CLOUD_ENABLED && currentUser
-      ? availableCloudBoards.map((board) => ({ id: board.id, label: board.title || '무제 테이블' }))
-      : Object.entries(getLocalTables()).map(([id, table]) => ({ id, label: table.boardName || '무제 테이블' }));
+      ? availableCloudBoards.map((board) => ({ id: board.id, label: normalizeProjectName(board.title) }))
+      : Object.entries(getLocalTables()).map(([id, table]) => ({ id, label: normalizeProjectName(table.boardName) }));
     const currentId = CLOUD_ENABLED && currentUser ? currentBoardId : currentLocalTableId;
+    const deleteButton = $('#deleteProjectBtn');
+    if (deleteButton) {
+      deleteButton.hidden = !options.length;
+      deleteButton.disabled = !currentId;
+    }
     if (!options.length) {
       els.tableSelect.hidden = true;
       return;
@@ -980,8 +1048,8 @@
 
   function renderTableView() {
     setHeader(
-      '테이블 원본',
-      '이 표가 모든 보기의 기준입니다. 여기서 수정하면 마인드맵, 칸반, 타임라인, 캘린더가 즉시 다시 그려집니다.',
+      '업무 테이블',
+      '프로젝트 업무를 수정하면 마인드맵, 칸반, 타임라인, 캘린더가 즉시 다시 그려집니다.',
       '<button class="primary-btn" data-action="add-task">업무 추가</button>'
     );
     if (!state.tasks.length) {
@@ -1563,7 +1631,7 @@
     const datedTasks = state.tasks.filter((t) => t.startDate || t.endDate);
     const undatedTasks = state.tasks.filter((t) => !t.startDate && !t.endDate);
     if (!datedTasks.length) {
-      els.viewRoot.innerHTML = `<div class="empty-state"><div class="empty-icon">📅</div><h3>일정이 있는 업무가 없습니다.</h3><p>테이블에서 시작일이나 마감일을 입력하면 타임라인이 자동 생성됩니다.</p></div>`;
+      els.viewRoot.innerHTML = `<div class="empty-state"><div class="empty-icon">📅</div><h3>일정이 있는 업무가 없습니다.</h3><p>업무 테이블에서 시작일이나 마감일을 입력하면 타임라인이 자동 생성됩니다.</p></div>`;
       return;
     }
     const dates = datedTasks.flatMap((t) => [t.startDate, t.endDate].filter(Boolean)).map((d) => new Date(d));
@@ -2230,6 +2298,12 @@
 
   function uid() {
     return (globalThis.crypto?.randomUUID?.() || `id_${Math.random().toString(36).slice(2)}_${Date.now()}`).replace(/-/g, '').slice(0, 18);
+  }
+
+  function normalizeProjectName(name) {
+    const title = String(name || '').trim();
+    if (title === 'LED 전광판 사업 진행 상황') return 'LED전광판 사업 진행 현황';
+    return title || '무제 프로젝트';
   }
 
   function sanitizeFileName(name) {
