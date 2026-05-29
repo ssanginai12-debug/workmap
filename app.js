@@ -90,6 +90,9 @@
   let boardSettingsColumnMissing = false;
   let mindDragSuppressClick = false;
   let kanbanDragSuppressClick = false;
+  let activeTouchCount = 0;
+  let pinchGestureBlockUntil = 0;
+  let hadMultiTouchGesture = false;
 
   const els = {
     boardTitle: $('#boardTitle'),
@@ -852,6 +855,53 @@
     return normalizeSurfaceZoom(state.viewZooms[view]);
   }
 
+  function isMobileSurfaceZoomEnabled() {
+    return window.matchMedia?.('(max-width: 720px)').matches || false;
+  }
+
+  function getRenderedSurfaceZoom(view) {
+    return 1;
+  }
+
+  function getLiveSurfaceZoom(view) {
+    const surface = $(`[data-pinch-zoom-view="${view}"]`, els.viewRoot);
+    const zoom = Number(surface?.style.zoom || (surface ? getComputedStyle(surface).zoom : 1));
+    return normalizeSurfaceZoom(zoom || 1);
+  }
+
+  function markPinchGesture() {
+    if (!isMobileSurfaceZoomEnabled()) return;
+    pinchGestureBlockUntil = Date.now() + 260;
+  }
+
+  function isPinchGestureActive() {
+    return isMobileSurfaceZoomEnabled() && (activeTouchCount > 1 || Date.now() < pinchGestureBlockUntil);
+  }
+
+  document.addEventListener('touchstart', (event) => {
+    activeTouchCount = event.touches?.length || 0;
+    if (activeTouchCount > 1) {
+      hadMultiTouchGesture = true;
+      markPinchGesture();
+    }
+  }, { capture: true, passive: true });
+
+  document.addEventListener('touchmove', (event) => {
+    activeTouchCount = event.touches?.length || 0;
+    if (activeTouchCount > 1) {
+      hadMultiTouchGesture = true;
+      markPinchGesture();
+    }
+  }, { capture: true, passive: true });
+
+  const settleTouchGesture = (event) => {
+    activeTouchCount = event.touches?.length || 0;
+    if (activeTouchCount <= 1 && hadMultiTouchGesture) markPinchGesture();
+    if (activeTouchCount === 0) hadMultiTouchGesture = false;
+  };
+  document.addEventListener('touchend', settleTouchGesture, { capture: true, passive: true });
+  document.addEventListener('touchcancel', settleTouchGesture, { capture: true, passive: true });
+
   function bindGlobalEvents() {
     els.boardTitle.addEventListener('input', (e) => {
       state.boardName = normalizeProjectName(e.target.value);
@@ -1405,7 +1455,7 @@
   }
 
   function renderKanbanView() {
-    const zoom = getSurfaceZoom('kanban');
+    const zoom = getRenderedSurfaceZoom('kanban');
     setHeader(
       '칸반 보기',
       '컬럼을 직접 추가/삭제할 수 있고, 카드를 다른 컬럼으로 드래그하면 상태값이 전체 보기에 반영됩니다.',
@@ -1414,7 +1464,7 @@
     const statuses = getStatuses();
     els.viewRoot.innerHTML = `
       ${metricsStripHtml()}
-      <div class="kanban-board zoomable-surface" data-pinch-zoom-view="kanban" style="zoom:${zoom}">
+      <div class="kanban-board zoomable-surface ${zoom !== 1 ? 'is-zoomed' : ''}" data-pinch-zoom-view="kanban" style="zoom:${zoom}">
         ${statuses.map((status) => {
           const tasks = state.tasks.filter((t) => t.status === status);
           const canDelete = statuses.length > 1 && canDeleteStatus(status);
@@ -1461,10 +1511,18 @@
     $$('[data-drag-task]', els.viewRoot).forEach((card) => {
       card.addEventListener('pointerdown', (event) => {
         if (event.button !== 0) return;
-        if (event.pointerType === 'touch') event.preventDefault();
+        const isTouchPointer = event.pointerType === 'touch';
+        if (event.pointerType === 'touch') {
+          if (isPinchGestureActive()) return;
+        } else {
+          event.preventDefault();
+        }
         const start = { x: event.clientX, y: event.clientY };
         const id = card.dataset.dragTask;
         let moved = false;
+        let cancelKanbanCommit = false;
+        let dragArmed = !isTouchPointer;
+        let touchHoldTimer = null;
         let activeColumn = null;
         let dragGhost = null;
         let cardRect = null;
@@ -1472,11 +1530,28 @@
         let lastPointer = null;
         let autoScrollTimer = null;
         let previousBoardSnapType = null;
-        try {
-          card.setPointerCapture?.(event.pointerId);
-        } catch (captureError) {
-          // Synthetic touch tests may not register an active pointer before this call.
+        const capturePointer = () => {
+          try {
+            card.setPointerCapture?.(event.pointerId);
+          } catch (captureError) {
+            // Synthetic touch tests may not register an active pointer before this call.
+          }
+        };
+        if (isTouchPointer) {
+          touchHoldTimer = setTimeout(() => {
+            dragArmed = true;
+            capturePointer();
+          }, 220);
+        } else {
+          capturePointer();
         }
+
+        const onTouchPinchCancel = (touchEvent) => {
+          if (touchEvent.touches.length <= 1) return;
+          markPinchGesture();
+          cancelKanbanCommit = true;
+          onUp({ clientX: start.x, clientY: start.y });
+        };
 
         const setDropColumn = (column) => {
           if (activeColumn === column) return;
@@ -1537,9 +1612,21 @@
           }
         };
         const onMove = (moveEvent) => {
+          if (moveEvent.pointerType === 'touch' && isPinchGestureActive()) {
+            cancelKanbanCommit = true;
+            onUp(moveEvent);
+            return;
+          }
           lastPointer = { clientX: moveEvent.clientX, clientY: moveEvent.clientY };
           const dx = moveEvent.clientX - start.x;
           const dy = moveEvent.clientY - start.y;
+          if (isTouchPointer && !dragArmed) {
+            if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+              cancelKanbanCommit = true;
+              onUp(moveEvent);
+            }
+            return;
+          }
           if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
           if (!moved) return;
           moveEvent.preventDefault();
@@ -1554,6 +1641,12 @@
           document.removeEventListener('pointermove', onMove);
           document.removeEventListener('pointerup', onUp);
           document.removeEventListener('pointercancel', onUp);
+          document.removeEventListener('touchstart', onTouchPinchCancel, true);
+          document.removeEventListener('touchmove', onTouchPinchCancel, true);
+          if (touchHoldTimer) {
+            clearTimeout(touchHoldTimer);
+            touchHoldTimer = null;
+          }
           if (autoScrollTimer) {
             clearInterval(autoScrollTimer);
             autoScrollTimer = null;
@@ -1569,10 +1662,11 @@
           document.body.classList.remove('kanban-drag-active');
           const board = $('.kanban-board', els.viewRoot);
           if (board && previousBoardSnapType !== null) {
-            board.style.scrollSnapType = previousBoardSnapType;
+          const boardZoom = Number(board.style.zoom || getComputedStyle(board).zoom || 1);
+          board.style.scrollSnapType = Math.abs(boardZoom - 1) > 0.01 ? 'none' : previousBoardSnapType;
           }
           activeColumn?.classList.remove('drag-over');
-          if (moved) {
+          if (moved && !cancelKanbanCommit) {
             kanbanDragSuppressClick = true;
             setTimeout(() => { kanbanDragSuppressClick = false; }, 0);
             const targetColumn = document.elementFromPoint(upEvent.clientX, upEvent.clientY)?.closest('[data-drop-status]') || activeColumn;
@@ -1587,17 +1681,23 @@
         document.addEventListener('pointermove', onMove);
         document.addEventListener('pointerup', onUp);
         document.addEventListener('pointercancel', onUp);
+        if (event.pointerType === 'touch') {
+          document.addEventListener('touchstart', onTouchPinchCancel, { capture: true, passive: true });
+          document.addEventListener('touchmove', onTouchPinchCancel, { capture: true, passive: true });
+        }
       });
     });
   }
 
   function captureKanbanViewport() {
     const board = $('.kanban-board', els.viewRoot);
+    const boardZoom = board ? Number(board.style.zoom || getComputedStyle(board).zoom || 1) || 1 : 1;
     return {
       rootLeft: els.viewRoot?.scrollLeft || 0,
       rootTop: els.viewRoot?.scrollTop || 0,
       boardLeft: board?.scrollLeft || 0,
       boardTop: board?.scrollTop || 0,
+      boardZoom,
       columnScrolls: $$('[data-drop-status]', els.viewRoot).map((column) => ({
         status: column.dataset.dropStatus,
         top: $('.kanban-cards', column)?.scrollTop || 0
@@ -1613,7 +1713,14 @@
         els.viewRoot.scrollTop = snapshot.rootTop;
       }
       const board = $('.kanban-board', els.viewRoot);
+      let previousSnap = '';
       if (board) {
+        previousSnap = board.style.scrollSnapType || '';
+        if (Math.abs((snapshot.boardZoom || 1) - 1) > 0.01) {
+          board.style.zoom = String(snapshot.boardZoom);
+          board.classList.add('is-zoomed');
+        }
+        board.style.scrollSnapType = 'none';
         board.scrollLeft = snapshot.boardLeft;
         board.scrollTop = snapshot.boardTop;
       }
@@ -1621,6 +1728,23 @@
         const column = $$('[data-drop-status]', els.viewRoot).find((candidate) => candidate.dataset.dropStatus === item.status);
         const cards = column && $('.kanban-cards', column);
         if (cards) cards.scrollTop = item.top;
+      });
+      requestAnimationFrame(() => {
+        const nextBoard = $('.kanban-board', els.viewRoot);
+        if (els.viewRoot) {
+          els.viewRoot.scrollLeft = snapshot.rootLeft;
+          els.viewRoot.scrollTop = snapshot.rootTop;
+        }
+        if (nextBoard) {
+          if (Math.abs((snapshot.boardZoom || 1) - 1) > 0.01) {
+            nextBoard.style.zoom = String(snapshot.boardZoom);
+            nextBoard.classList.add('is-zoomed');
+          }
+          nextBoard.scrollLeft = snapshot.boardLeft;
+          nextBoard.scrollTop = snapshot.boardTop;
+          const boardZoom = Number(snapshot.boardZoom || nextBoard.style.zoom || getComputedStyle(nextBoard).zoom || 1);
+          nextBoard.style.scrollSnapType = Math.abs(boardZoom - 1) > 0.01 || isMobileSurfaceZoomEnabled() ? 'none' : previousSnap;
+        }
       });
     });
   }
@@ -1640,6 +1764,7 @@
 
   function bindSurfacePinchZoom(target, view, customApply) {
     if (!target) return;
+    if (view !== 'mindmap' && !isMobileSurfaceZoomEnabled()) return;
     let startDistance = 0;
     let startZoom = 1;
     let lastZoom = 1;
@@ -1647,15 +1772,17 @@
 
     target.addEventListener('touchstart', (event) => {
       if (event.touches.length !== 2) return;
+      markPinchGesture();
       pinching = true;
       startDistance = touchDistance(event.touches);
-      startZoom = view === 'mindmap' ? normalizeMindZoom(state.mindZoom) : getSurfaceZoom(view);
+      startZoom = view === 'mindmap' ? normalizeMindZoom(state.mindZoom) : getLiveSurfaceZoom(view);
       lastZoom = startZoom;
       target.classList.add('pinching');
     }, { passive: true });
 
     target.addEventListener('touchmove', (event) => {
       if (!pinching || event.touches.length !== 2 || !startDistance) return;
+      markPinchGesture();
       event.preventDefault();
       const scale = touchDistance(event.touches) / startDistance;
       const center = touchCenter(event.touches);
@@ -1675,36 +1802,47 @@
       if (!pinching) return;
       pinching = false;
       startDistance = 0;
+      markPinchGesture();
       target.classList.remove('pinching');
-      queueBoardSettingsSave(true);
+      if (view === 'mindmap') queueBoardSettingsSave(true);
     };
     target.addEventListener('touchend', finishPinch, { passive: true });
     target.addEventListener('touchcancel', finishPinch, { passive: true });
   }
 
   function applySurfaceZoom(view, nextZoom, options = {}) {
-    const oldZoom = getSurfaceZoom(view);
+    if (!isMobileSurfaceZoomEnabled()) return;
+    const oldZoom = getLiveSurfaceZoom(view);
     const normalizedNext = normalizeSurfaceZoom(nextZoom);
     if (normalizedNext === oldZoom) return;
     const surface = $(`[data-pinch-zoom-view="${view}"]`, els.viewRoot);
     const scroller = view === 'kanban' ? surface : els.viewRoot;
     const rect = scroller?.getBoundingClientRect();
-    const scrollLeft = scroller?.scrollLeft || 0;
-    const scrollTop = scroller?.scrollTop || 0;
+    const previousLeft = scroller?.scrollLeft || 0;
+    const previousTop = scroller?.scrollTop || 0;
     const anchorX = rect && Number.isFinite(options.clientX) ? options.clientX - rect.left : (rect?.width || 0) / 2;
     const anchorY = rect && Number.isFinite(options.clientY) ? options.clientY - rect.top : (rect?.height || 0) / 2;
-    const contentX = scrollLeft + anchorX;
-    const contentY = scrollTop + anchorY;
-    const ratio = normalizedNext / (oldZoom || 1);
-    state.viewZooms = normalizeViewZooms(state.viewZooms || {});
-    state.viewZooms[view] = normalizedNext;
-    scheduleSave();
-    saveLocalBoardSettings();
-    if (surface) surface.style.zoom = normalizedNext;
+    const contentRatioX = scroller && scroller.scrollWidth
+      ? Math.min(1, Math.max(0, (scroller.scrollLeft + anchorX) / scroller.scrollWidth))
+      : 0.5;
+    const contentRatioY = scroller && scroller.scrollHeight
+      ? Math.min(1, Math.max(0, (scroller.scrollTop + anchorY) / scroller.scrollHeight))
+      : 0.5;
+    if (surface) {
+      surface.style.zoom = normalizedNext;
+      surface.classList.toggle('is-zoomed', Math.abs(normalizedNext - 1) > 0.01);
+      if (view === 'kanban') surface.style.scrollSnapType = Math.abs(normalizedNext - 1) > 0.01 ? 'none' : '';
+    }
     requestAnimationFrame(() => {
       if (!scroller) return;
-      scroller.scrollLeft = Math.max(0, contentX * ratio - anchorX);
-      scroller.scrollTop = Math.max(0, contentY * ratio - anchorY);
+      let nextLeft = Math.max(0, scroller.scrollWidth * contentRatioX - anchorX);
+      let nextTop = Math.max(0, scroller.scrollHeight * contentRatioY - anchorY);
+      if (normalizedNext > oldZoom) {
+        nextLeft = Math.max(previousLeft, nextLeft);
+        nextTop = Math.max(previousTop, nextTop);
+      }
+      scroller.scrollLeft = nextLeft;
+      scroller.scrollTop = nextTop;
     });
   }
 
@@ -1979,10 +2117,24 @@
 
       shell.addEventListener('pointerdown', (event) => {
         if (event.button !== 0 || event.target.closest('.mind-node')) return;
+        if (event.pointerType === 'touch' && isPinchGestureActive()) return;
         const start = { x: event.clientX, y: event.clientY, left: shell.scrollLeft, top: shell.scrollTop };
-        shell.setPointerCapture?.(event.pointerId);
+        try {
+          shell.setPointerCapture?.(event.pointerId);
+        } catch (captureError) {
+          // Synthetic touch tests may not register an active pointer before this call.
+        }
         shell.classList.add('panning');
+        const onTouchPinchCancel = (touchEvent) => {
+          if (touchEvent.touches.length <= 1) return;
+          markPinchGesture();
+          onUp();
+        };
         const onMove = (moveEvent) => {
+          if (moveEvent.pointerType === 'touch' && isPinchGestureActive()) {
+            onUp();
+            return;
+          }
           moveEvent.preventDefault();
           shell.scrollLeft = start.left - (moveEvent.clientX - start.x);
           shell.scrollTop = start.top - (moveEvent.clientY - start.y);
@@ -1991,18 +2143,30 @@
           document.removeEventListener('pointermove', onMove);
           document.removeEventListener('pointerup', onUp);
           document.removeEventListener('pointercancel', onUp);
-          shell.releasePointerCapture?.(event.pointerId);
+          document.removeEventListener('touchstart', onTouchPinchCancel, true);
+          document.removeEventListener('touchmove', onTouchPinchCancel, true);
+          try {
+            shell.releasePointerCapture?.(event.pointerId);
+          } catch (captureError) {
+            // Pointer capture may already be released on touch cancel or synthetic events.
+          }
           shell.classList.remove('panning');
         };
         document.addEventListener('pointermove', onMove);
         document.addEventListener('pointerup', onUp);
         document.addEventListener('pointercancel', onUp);
+        if (event.pointerType === 'touch') {
+          document.addEventListener('touchstart', onTouchPinchCancel, { capture: true, passive: true });
+          document.addEventListener('touchmove', onTouchPinchCancel, { capture: true, passive: true });
+        }
       });
     }
     $$('[data-mind-id]', svg).forEach((node) => {
       node.addEventListener('pointerdown', (event) => {
         if (event.button !== 0) return;
-        event.preventDefault();
+        const isTouchPointer = event.pointerType === 'touch';
+        if (event.pointerType === 'touch' && isPinchGestureActive()) return;
+        if (!isTouchPointer) event.preventDefault();
         const id = node.dataset.mindId;
         const width = Number(node.dataset.mindWidth) || 140;
         const height = Number(node.dataset.mindHeight) || 46;
@@ -2011,15 +2175,51 @@
         const dragScroll = { left: shell?.scrollLeft || 0, top: shell?.scrollTop || 0 };
         let latest = original;
         let moved = false;
-        node.setPointerCapture?.(event.pointerId);
-        node.classList.add('dragging');
+        let cancelMindCommit = false;
+        let dragArmed = !isTouchPointer;
+        let touchHoldTimer = null;
+        const capturePointer = () => {
+          try {
+            node.setPointerCapture?.(event.pointerId);
+          } catch (captureError) {
+            // Synthetic touch tests may not register an active pointer before this call.
+          }
+        };
+        if (isTouchPointer) {
+          touchHoldTimer = setTimeout(() => {
+            dragArmed = true;
+            capturePointer();
+          }, 220);
+        } else {
+          capturePointer();
+        }
+
+        const onTouchPinchCancel = (touchEvent) => {
+          if (touchEvent.touches.length <= 1) return;
+          markPinchGesture();
+          cancelMindCommit = true;
+          onUp();
+        };
 
         const onMove = (moveEvent) => {
-          moveEvent.preventDefault();
+          if (moveEvent.pointerType === 'touch' && isPinchGestureActive()) {
+            cancelMindCommit = true;
+            onUp();
+            return;
+          }
           const now = svgPoint(moveEvent);
           const dx = now.x - start.x;
           const dy = now.y - start.y;
+          if (isTouchPointer && !dragArmed) {
+            if (Math.abs(moveEvent.clientX - event.clientX) > 8 || Math.abs(moveEvent.clientY - event.clientY) > 8) {
+              cancelMindCommit = true;
+              onUp();
+            }
+            return;
+          }
+          moveEvent.preventDefault();
           if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
+          node.classList.add('dragging');
           latest = { x: original.x + dx, y: original.y + dy };
           nodeState.set(id, { x: latest.x, y: latest.y, width, height });
           node.setAttribute('transform', `translate(${latest.x - width / 2},${latest.y - height / 2})`);
@@ -2033,9 +2233,28 @@
           document.removeEventListener('pointermove', onMove);
           document.removeEventListener('pointerup', onUp);
           document.removeEventListener('pointercancel', onUp);
-          node.releasePointerCapture?.(event.pointerId);
+          document.removeEventListener('touchstart', onTouchPinchCancel, true);
+          document.removeEventListener('touchmove', onTouchPinchCancel, true);
+          if (touchHoldTimer) {
+            clearTimeout(touchHoldTimer);
+            touchHoldTimer = null;
+          }
+          try {
+            node.releasePointerCapture?.(event.pointerId);
+          } catch (captureError) {
+            // Pointer capture may already be released on touch cancel or synthetic events.
+          }
           node.classList.remove('dragging');
-          if (moved) {
+          if (moved && cancelMindCommit) {
+            nodeState.set(id, { x: original.x, y: original.y, width, height });
+            node.setAttribute('transform', `translate(${original.x - width / 2},${original.y - height / 2})`);
+            refreshLinks();
+            if (shell) {
+              shell.scrollLeft = dragScroll.left;
+              shell.scrollTop = dragScroll.top;
+            }
+          }
+          if (moved && !cancelMindCommit) {
             mindDragSuppressClick = true;
             setTimeout(() => { mindDragSuppressClick = false; }, 0);
             state.mindPositions = { ...(state.mindPositions || {}) };
@@ -2053,6 +2272,10 @@
         document.addEventListener('pointermove', onMove);
         document.addEventListener('pointerup', onUp);
         document.addEventListener('pointercancel', onUp);
+        if (event.pointerType === 'touch') {
+          document.addEventListener('touchstart', onTouchPinchCancel, { capture: true, passive: true });
+          document.addEventListener('touchmove', onTouchPinchCancel, { capture: true, passive: true });
+        }
       });
     });
     bindSurfacePinchZoom(shell, 'mindmap', applyMindZoom);
@@ -2075,15 +2298,23 @@
     const shell = $('[data-mindmap-shell]', els.viewRoot);
     const svg = $('.mindmap-svg', els.viewRoot);
     const rect = shell?.getBoundingClientRect();
+    const svgRect = svg?.getBoundingClientRect();
     const baseWidth = Number(svg?.dataset.baseWidth);
     const baseHeight = Number(svg?.dataset.baseHeight);
-    const scrollLeft = shell?.scrollLeft || 0;
-    const scrollTop = shell?.scrollTop || 0;
+    const previousLeft = shell?.scrollLeft || 0;
+    const previousTop = shell?.scrollTop || 0;
     const anchorX = rect && Number.isFinite(options.clientX) ? options.clientX - rect.left : (rect?.width || 0) / 2;
     const anchorY = rect && Number.isFinite(options.clientY) ? options.clientY - rect.top : (rect?.height || 0) / 2;
-    const contentX = scrollLeft + anchorX;
-    const contentY = scrollTop + anchorY;
-    const ratio = normalizedNext / (oldZoom || 1);
+    const contentRatioX = svgRect && Number.isFinite(options.clientX) && svgRect.width
+      ? Math.min(1, Math.max(0, (options.clientX - svgRect.left) / svgRect.width))
+      : shell && shell.scrollWidth
+        ? Math.min(1, Math.max(0, (shell.scrollLeft + anchorX) / shell.scrollWidth))
+        : 0.5;
+    const contentRatioY = svgRect && Number.isFinite(options.clientY) && svgRect.height
+      ? Math.min(1, Math.max(0, (options.clientY - svgRect.top) / svgRect.height))
+      : shell && shell.scrollHeight
+        ? Math.min(1, Math.max(0, (shell.scrollTop + anchorY) / shell.scrollHeight))
+        : 0.5;
     state.mindZoom = normalizedNext;
     scheduleSave();
     queueBoardSettingsSave(options.saveImmediately !== false);
@@ -2098,8 +2329,14 @@
     requestAnimationFrame(() => {
       const nextShell = $('[data-mindmap-shell]', els.viewRoot);
       if (!nextShell) return;
-      nextShell.scrollLeft = Math.max(0, contentX * ratio - anchorX);
-      nextShell.scrollTop = Math.max(0, contentY * ratio - anchorY);
+      let nextLeft = Math.max(0, nextShell.scrollWidth * contentRatioX - anchorX);
+      let nextTop = Math.max(0, nextShell.scrollHeight * contentRatioY - anchorY);
+      if (normalizedNext > oldZoom) {
+        nextLeft = Math.max(previousLeft, nextLeft);
+        nextTop = Math.max(previousTop, nextTop);
+      }
+      nextShell.scrollLeft = nextLeft;
+      nextShell.scrollTop = nextTop;
     });
   }
 
@@ -2138,7 +2375,7 @@
   }
 
   function renderTimelineView() {
-    const zoom = getSurfaceZoom('timeline');
+    const zoom = getRenderedSurfaceZoom('timeline');
     setHeader(
       '타임라인 보기',
       '시작일/마감일이 있는 업무가 자동으로 막대로 표시됩니다. 막대를 클릭해 날짜를 수정하면 다른 보기에도 반영됩니다.',
@@ -2234,7 +2471,7 @@
   }
 
   function renderCalendarView() {
-    const zoom = getSurfaceZoom('calendar');
+    const zoom = getRenderedSurfaceZoom('calendar');
     setHeader(
       '캘린더 보기',
       '같은 업무는 날짜별로 반복하지 않고 시작일부터 종료일까지 이어지는 막대로 표시합니다.',

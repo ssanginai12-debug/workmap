@@ -1,4 +1,4 @@
-const CACHE_NAME = 'workmap-mvp-v17-mobile-pinch';
+const CACHE_NAME = 'workmap-mvp-v21-size-viewport-stability';
 const FILES = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './상상인로고.png'];
 
 self.addEventListener('install', (event) => {

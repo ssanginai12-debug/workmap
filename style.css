@@ -381,6 +381,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .kanban-card:hover { border-color: #cbd7ff; transform: translateY(-1px); box-shadow: 0 12px 24px rgba(25,35,65,0.10); }
 .kanban-card.drag-source { opacity: 0.38; }
 body.kanban-drag-active .kanban-board { scroll-snap-type: none; }
+.kanban-board.is-zoomed { scroll-snap-type: none; }
 .kanban-drag-ghost {
   position: fixed;
   z-index: 9999;
@@ -985,13 +986,15 @@ body.kanban-drag-active {
   .kanban-board {
     min-height: 430px;
     gap: 12px;
-    scroll-snap-type: x mandatory;
+    scroll-snap-type: none;
     -webkit-overflow-scrolling: touch;
+  }
+  .kanban-card {
+    touch-action: pan-x pan-y;
   }
   .kanban-column {
     flex-basis: min(82vw, 300px);
     max-height: none;
-    scroll-snap-align: start;
   }
   .kanban-cards {
     max-height: 58vh;
@@ -1001,6 +1004,10 @@ body.kanban-drag-active {
     height: 62vh;
     min-height: 460px;
     border-radius: 14px;
+    touch-action: pan-x pan-y;
+  }
+  .mind-node {
+    touch-action: pan-x pan-y;
   }
   .mindmap-svg {
     min-height: 600px;
