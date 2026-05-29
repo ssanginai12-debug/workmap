@@ -378,7 +378,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .kanban-card:hover { border-color: #cbd7ff; transform: translateY(-1px); box-shadow: 0 12px 24px rgba(25,35,65,0.10); }
-.kanban-card.dragging { cursor: grabbing; opacity: 0.92; box-shadow: 0 18px 34px rgba(25,35,65,0.18); }
+.kanban-card.drag-source { opacity: 0.38; }
+.kanban-drag-ghost {
+  position: fixed;
+  z-index: 9999;
+  margin: 0;
+  pointer-events: none;
+  cursor: grabbing;
+  opacity: 0.96;
+  transform: rotate(1deg);
+  box-shadow: 0 22px 44px rgba(25,35,65,0.22);
+}
+body.kanban-drag-active {
+  cursor: grabbing;
+  user-select: none;
+}
 .kanban-card.is-complete { opacity: 0.74; }
 .kanban-card.has-date-error { background: #fff8f8; }
 .kanban-card.is-overdue { box-shadow: inset 0 0 0 1px #ffd3d7, 0 8px 18px rgba(25,35,65,0.06); }
@@ -786,4 +800,369 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (max-width: 720px) {
   .calendar-board { min-width: 840px; }
   .calendar-weekdays, .calendar-week { grid-template-columns: repeat(7, minmax(120px, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  html, body { overflow-x: hidden; }
+  body {
+    background:
+      radial-gradient(circle at top left, rgba(47, 92, 255, 0.10), transparent 78vw),
+      linear-gradient(180deg, #fbfcff 0%, var(--bg) 100%);
+  }
+
+  .topbar {
+    position: static;
+    gap: 12px;
+    padding: 12px 14px 14px;
+  }
+  .brand-block {
+    width: 100%;
+    min-width: 0;
+    flex: 0 1 auto;
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .brand-logo {
+    width: 52px;
+    height: 52px;
+  }
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+  }
+  .board-title-input {
+    width: 100%;
+    font-size: 20px;
+    line-height: 1.2;
+    padding: 2px 0;
+  }
+  .topbar-actions {
+    width: 100%;
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    justify-content: stretch;
+  }
+  .topbar-actions .save-status {
+    min-width: 0;
+    padding: 0;
+    align-self: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .topbar-actions #userEmail {
+    max-width: none;
+  }
+  .project-select {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+    min-height: 42px;
+  }
+  .topbar-actions .ghost-btn,
+  .topbar-actions .primary-btn,
+  .topbar-actions .file-label {
+    width: 100%;
+    min-height: 42px;
+    padding: 0 10px;
+    justify-content: center;
+    font-size: 13px;
+  }
+
+  .view-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 15;
+    gap: 8px;
+    padding: 10px 14px;
+    background: rgba(245, 247, 251, 0.94);
+    border-bottom: 1px solid rgba(229, 233, 242, 0.9);
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+  .view-tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    min-height: 40px;
+    padding: 0 16px;
+    scroll-snap-align: start;
+  }
+
+  .layout {
+    gap: 14px;
+    padding: 14px;
+  }
+  .panel,
+  .workspace {
+    border-radius: 18px;
+  }
+  .panel {
+    padding: 16px;
+  }
+  .workspace {
+    min-height: auto;
+    overflow: visible;
+  }
+  .view-header {
+    min-height: auto;
+    padding: 16px;
+  }
+  .view-header p {
+    line-height: 1.5;
+  }
+  .view-root {
+    min-height: auto;
+    padding: 14px;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .header-actions {
+    width: 100%;
+  }
+  .header-actions .ghost-btn,
+  .header-actions .primary-btn {
+    flex: 1 1 140px;
+  }
+  .empty-state {
+    min-height: 300px;
+    padding: 18px 8px;
+  }
+  .empty-state h3 {
+    font-size: 20px;
+  }
+
+  .summary-grid,
+  .view-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .summary-card,
+  .view-metrics > div {
+    min-width: 0;
+  }
+  .summary-card b,
+  .view-metrics b {
+    font-size: 22px;
+  }
+
+  .data-table-wrap {
+    max-height: none;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .data-table {
+    min-width: 980px;
+  }
+  .data-table th,
+  .data-table td {
+    padding: 9px 8px;
+    font-size: 12px;
+  }
+  .data-input,
+  .data-select {
+    min-height: 38px;
+    font-size: 12px;
+    padding: 7px 9px;
+  }
+  .action-cell {
+    width: 64px;
+  }
+  .mini-btn {
+    min-height: 34px;
+    padding: 0 10px;
+  }
+
+  .kanban-board {
+    min-height: 430px;
+    gap: 12px;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+  .kanban-column {
+    flex-basis: min(82vw, 300px);
+    max-height: none;
+    scroll-snap-align: start;
+  }
+  .kanban-cards {
+    max-height: 58vh;
+  }
+
+  .mindmap-shell {
+    height: 62vh;
+    min-height: 460px;
+    border-radius: 14px;
+  }
+  .mindmap-svg {
+    min-height: 600px;
+  }
+  .mindmap-toolbar {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .timeline-wrap {
+    grid-template-columns: 150px minmax(700px, 1fr);
+    max-height: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .timeline-left,
+  .timeline-right {
+    min-height: 430px;
+  }
+  .timeline-label {
+    padding: 0 9px;
+    font-size: 12px;
+  }
+  .timeline-axis-days {
+    grid-template-columns: repeat(var(--day-count), minmax(48px, 1fr));
+  }
+  .timeline-day {
+    padding: 6px 5px 4px;
+  }
+
+  .calendar-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .calendar-nav {
+    width: 100%;
+  }
+  .calendar-nav .ghost-btn {
+    flex: 1;
+  }
+  .calendar-board {
+    min-width: 760px;
+    border-radius: 14px;
+  }
+  .calendar-weekdays,
+  .calendar-week {
+    grid-template-columns: repeat(7, minmax(108px, 1fr));
+  }
+  .calendar-day-shell {
+    padding: 8px;
+  }
+  .calendar-event-bar {
+    height: 23px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+
+  .drawer {
+    width: 100vw;
+  }
+  .drawer-header {
+    padding: 18px;
+  }
+  .drawer-body {
+    padding: 16px 18px 28px;
+  }
+  .drawer-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .drawer-actions .ghost-btn,
+  .drawer-actions .danger-btn {
+    width: 100%;
+  }
+
+  .modal {
+    top: 10px;
+    transform: translateX(-50%);
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+    border-radius: 18px;
+  }
+  .modal-header,
+  .modal-body {
+    padding: 18px;
+  }
+  .modal-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .modal-actions .ghost-btn,
+  .modal-actions .primary-btn {
+    width: 100%;
+  }
+  .auth-screen {
+    padding: 14px;
+  }
+  .auth-card {
+    padding: 22px;
+    border-radius: 22px;
+  }
+  .auth-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .topbar-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+  .summary-grid,
+  .view-metrics {
+    gap: 8px;
+  }
+  .summary-card,
+  .view-metrics > div {
+    padding: 10px;
+  }
+  .data-table {
+    min-width: 900px;
+  }
+  .timeline-wrap {
+    grid-template-columns: 132px minmax(640px, 1fr);
+  }
+  .calendar-board {
+    min-width: 720px;
+  }
+  .calendar-weekdays,
+  .calendar-week {
+    grid-template-columns: repeat(7, minmax(102px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  body .topbar {
+    position: static;
+    gap: 12px;
+    padding: 12px 14px 14px;
+  }
+  body .topbar .brand-block {
+    width: 100%;
+    min-width: 0 !important;
+    flex: 0 1 auto !important;
+    display: grid !important;
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 10px;
+  }
+  body .topbar .topbar-actions {
+    width: 100%;
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    justify-content: stretch;
+  }
+  body .topbar .project-select {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+  }
+  body .topbar .ghost-btn,
+  body .topbar .primary-btn,
+  body .topbar .file-label {
+    width: 100%;
+    justify-content: center;
+  }
+  body .layout,
+  body .sidebar,
+  body .workspace {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+  body .workspace {
+    overflow: hidden;
+  }
 }

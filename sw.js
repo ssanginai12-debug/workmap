@@ -1,4 +1,4 @@
-const CACHE_NAME = 'workmap-mvp-v13-cloud-query-timeout';
+const CACHE_NAME = 'workmap-mvp-v15-kanban-drag-logo';
 const FILES = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './상상인로고.png'];
 
 self.addEventListener('install', (event) => {

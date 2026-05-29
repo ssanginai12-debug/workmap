@@ -845,10 +845,15 @@
 
     $$('.tab').forEach((tab) => {
       tab.addEventListener('click', () => {
+        const viewChanged = state.view !== tab.dataset.view;
         state.view = tab.dataset.view;
         if (CLOUD_ENABLED) localStorage.setItem(CLOUD_VIEW_KEY, state.view);
         scheduleSave();
         render();
+        if (viewChanged && els.viewRoot) {
+          els.viewRoot.scrollLeft = 0;
+          els.viewRoot.scrollTop = 0;
+        }
       });
     });
 
@@ -1433,6 +1438,9 @@
         const id = card.dataset.dragTask;
         let moved = false;
         let activeColumn = null;
+        let dragGhost = null;
+        let cardRect = null;
+        let pointerOffset = { x: 0, y: 0 };
         card.setPointerCapture?.(event.pointerId);
 
         const setDropColumn = (column) => {
@@ -1441,28 +1449,51 @@
           activeColumn = column;
           activeColumn?.classList.add('drag-over');
         };
+        const ensureDragGhost = () => {
+          if (dragGhost) return;
+          cardRect = card.getBoundingClientRect();
+          pointerOffset = {
+            x: start.x - cardRect.left,
+            y: start.y - cardRect.top
+          };
+          dragGhost = card.cloneNode(true);
+          dragGhost.removeAttribute('data-open-task');
+          dragGhost.removeAttribute('data-drag-task');
+          dragGhost.classList.add('kanban-drag-ghost');
+          dragGhost.style.width = `${cardRect.width}px`;
+          dragGhost.style.height = `${cardRect.height}px`;
+          dragGhost.style.left = `${cardRect.left}px`;
+          dragGhost.style.top = `${cardRect.top}px`;
+          document.body.appendChild(dragGhost);
+          card.classList.add('drag-source');
+          document.body.classList.add('kanban-drag-active');
+        };
+        const moveDragGhost = (moveEvent) => {
+          if (!dragGhost) return;
+          dragGhost.style.left = `${moveEvent.clientX - pointerOffset.x}px`;
+          dragGhost.style.top = `${moveEvent.clientY - pointerOffset.y}px`;
+        };
         const onMove = (moveEvent) => {
           const dx = moveEvent.clientX - start.x;
           const dy = moveEvent.clientY - start.y;
           if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
           if (!moved) return;
           moveEvent.preventDefault();
-          card.classList.add('dragging');
-          card.style.transform = `translate(${dx}px, ${dy}px) rotate(1deg)`;
-          card.style.zIndex = '20';
-          card.style.pointerEvents = 'none';
+          ensureDragGhost();
+          moveDragGhost(moveEvent);
+          dragGhost.style.pointerEvents = 'none';
           setDropColumn(document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest('[data-drop-status]'));
-          card.style.pointerEvents = '';
+          dragGhost.style.pointerEvents = '';
         };
         const onUp = (upEvent) => {
           document.removeEventListener('pointermove', onMove);
           document.removeEventListener('pointerup', onUp);
           document.removeEventListener('pointercancel', onUp);
           card.releasePointerCapture?.(event.pointerId);
-          card.classList.remove('dragging');
-          card.style.transform = '';
-          card.style.zIndex = '';
-          card.style.pointerEvents = '';
+          card.classList.remove('drag-source');
+          dragGhost?.remove();
+          dragGhost = null;
+          document.body.classList.remove('kanban-drag-active');
           activeColumn?.classList.remove('drag-over');
           if (moved) {
             kanbanDragSuppressClick = true;
