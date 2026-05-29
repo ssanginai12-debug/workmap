@@ -11,6 +11,7 @@
   const DELETE_CATEGORY_VALUE = '__workmap_delete_category__';
   const DELETE_STATUS_VALUE = '__workmap_delete_status__';
   const CLOUD_INVITE_TIMEOUT_MS = 4000;
+  const CLOUD_QUERY_TIMEOUT_MS = 9000;
   const CLOUD_CONFIG = window.WORKMAP_SUPABASE || {};
   const CLOUD_ENABLED = Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.anonKey && window.supabase);
   const supabaseClient = CLOUD_ENABLED ? window.supabase.createClient(CLOUD_CONFIG.url, CLOUD_CONFIG.anonKey) : null;
@@ -371,14 +372,22 @@
     let preferredBoardId = urlBoardId || localStorage.getItem(CLOUD_BOARD_KEY) || '';
     let board = null;
     if (preferredBoardId) {
-      const { data } = await supabaseClient.from('boards').select('id,title,updated_at').eq('id', preferredBoardId).maybeSingle();
+      const { data } = await withTimeout(
+        supabaseClient.from('boards').select('id,title,updated_at').eq('id', preferredBoardId).maybeSingle(),
+        '현재 프로젝트 조회',
+        CLOUD_QUERY_TIMEOUT_MS
+      );
       board = data || null;
     }
 
-    const { data: boards, error: boardsError } = await supabaseClient
-      .from('boards')
-      .select('id,title,updated_at')
-      .order('updated_at', { ascending: false });
+    const { data: boards, error: boardsError } = await withTimeout(
+      supabaseClient
+        .from('boards')
+        .select('id,title,updated_at')
+        .order('updated_at', { ascending: false }),
+      '프로젝트 목록 조회',
+      CLOUD_QUERY_TIMEOUT_MS
+    );
     if (boardsError) throw boardsError;
     availableCloudBoards = boards || [];
     if (!board) {
@@ -403,14 +412,28 @@
   }
 
   async function loadCloudBoard(boardId) {
-    const [{ data: board, error: boardError }, { data: tasks, error: tasksError }, { data: members, error: membersError }] = await Promise.all([
-      supabaseClient.from('boards').select('*').eq('id', boardId).single(),
-      supabaseClient.from('tasks').select('*').eq('board_id', boardId).order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
-      supabaseClient.from('board_members').select('*').eq('board_id', boardId).order('created_at', { ascending: true })
-    ]);
+    const [{ data: board, error: boardError }, { data: tasks, error: tasksError }] = await withTimeout(
+      Promise.all([
+        supabaseClient.from('boards').select('*').eq('id', boardId).single(),
+        supabaseClient.from('tasks').select('*').eq('board_id', boardId).order('sort_order', { ascending: true }).order('created_at', { ascending: true })
+      ]),
+      '프로젝트 데이터 조회',
+      CLOUD_QUERY_TIMEOUT_MS
+    );
     if (boardError) throw boardError;
     if (tasksError) throw tasksError;
-    if (membersError) throw membersError;
+    let members = [];
+    try {
+      const { data, error } = await withTimeout(
+        supabaseClient.from('board_members').select('*').eq('board_id', boardId).order('created_at', { ascending: true }),
+        '멤버 목록 조회',
+        5000
+      );
+      if (error) throw error;
+      members = data || [];
+    } catch (memberError) {
+      console.warn('멤버 목록 조회 건너뜀:', memberError.message || memberError);
+    }
     const projectTitle = normalizeProjectName(board.title);
     state = normalizeState({
       boardName: projectTitle,
@@ -423,7 +446,11 @@
     const boardOption = availableCloudBoards.find((item) => item.id === boardId);
     if (boardOption) boardOption.title = projectTitle;
     if (board.title !== projectTitle) {
-      await supabaseClient.from('boards').update({ title: projectTitle }).eq('id', boardId);
+      withTimeout(
+        supabaseClient.from('boards').update({ title: projectTitle }).eq('id', boardId),
+        '프로젝트명 정리',
+        5000
+      ).catch((titleError) => console.warn('프로젝트명 정리 건너뜀:', titleError.message || titleError));
     }
   }
 

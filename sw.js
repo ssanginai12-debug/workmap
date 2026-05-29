@@ -1,4 +1,4 @@
-const CACHE_NAME = 'workmap-mvp-v12-refresh-loading-fix';
+const CACHE_NAME = 'workmap-mvp-v13-cloud-query-timeout';
 const FILES = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './상상인로고.png'];
 
 self.addEventListener('install', (event) => {
