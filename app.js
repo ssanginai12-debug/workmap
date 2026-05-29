@@ -10,6 +10,7 @@
   const ADD_STATUS_VALUE = '__workmap_add_status__';
   const DELETE_CATEGORY_VALUE = '__workmap_delete_category__';
   const DELETE_STATUS_VALUE = '__workmap_delete_status__';
+  const SURFACE_ZOOM_DEFAULTS = { kanban: 1, timeline: 1, calendar: 1 };
   const CLOUD_INVITE_TIMEOUT_MS = 4000;
   const CLOUD_QUERY_TIMEOUT_MS = 9000;
   const CLOUD_CONFIG = window.WORKMAP_SUPABASE || {};
@@ -531,6 +532,7 @@
       state.statuses = normalizeStatusList(settings.statuses || state.statuses, state.tasks);
       state.mindPositions = normalizeMindPositions(settings.mindPositions || state.mindPositions);
       state.mindZoom = normalizeMindZoom(settings.mindZoom || state.mindZoom);
+      state.viewZooms = normalizeViewZooms(settings.viewZooms || state.viewZooms);
       shouldRender = true;
     }
     if (shouldRender) render();
@@ -648,7 +650,8 @@
     return {
       statuses: normalizeStatusList(state.statuses, state.tasks),
       mindPositions: normalizeMindPositions(state.mindPositions || {}),
-      mindZoom: normalizeMindZoom(state.mindZoom)
+      mindZoom: normalizeMindZoom(state.mindZoom),
+      viewZooms: normalizeViewZooms(state.viewZooms || {})
     };
   }
 
@@ -672,9 +675,10 @@
       return {
         statuses: item.statuses || merged.statuses,
         mindPositions: item.mindPositions || merged.mindPositions,
-        mindZoom: item.mindZoom || merged.mindZoom
+        mindZoom: item.mindZoom || merged.mindZoom,
+        viewZooms: item.viewZooms || merged.viewZooms
       };
-    }, { statuses: DEFAULT_STATUSES, mindPositions: {}, mindZoom: 1 });
+    }, { statuses: DEFAULT_STATUSES, mindPositions: {}, mindZoom: 1, viewZooms: { ...SURFACE_ZOOM_DEFAULTS } });
   }
 
   function getInitialState() {
@@ -729,6 +733,7 @@
       statuses: DEFAULT_STATUSES.slice(),
       mindPositions: {},
       mindZoom: 1,
+      viewZooms: { ...SURFACE_ZOOM_DEFAULTS },
       members: [],
       tasks: []
     });
@@ -742,6 +747,7 @@
       statuses: DEFAULT_STATUSES.slice(),
       mindPositions: {},
       mindZoom: 1,
+      viewZooms: { ...SURFACE_ZOOM_DEFAULTS },
       members: [
         { id: uid(), email: 'project@sangsangin.co.kr', role: '관리자' }
       ],
@@ -777,6 +783,7 @@
       statuses: Array.isArray(settings.statuses) ? settings.statuses : base.statuses.slice(),
       mindPositions: normalizeMindPositions(settings.mindPositions || raw.mindPositions || {}),
       mindZoom: normalizeMindZoom(settings.mindZoom || raw.mindZoom || base.mindZoom),
+      viewZooms: normalizeViewZooms(settings.viewZooms || raw.viewZooms || base.viewZooms),
       members: Array.isArray(raw.members) ? raw.members : [],
       tasks: Array.isArray(raw.tasks) ? raw.tasks : []
     };
@@ -822,9 +829,27 @@
     return Math.min(1.8, Math.max(0.6, Math.round(zoom * 100) / 100));
   }
 
+  function normalizeSurfaceZoom(value) {
+    const zoom = Number(value);
+    if (!Number.isFinite(zoom)) return 1;
+    return Math.min(1.8, Math.max(0.55, Math.round(zoom * 100) / 100));
+  }
+
+  function normalizeViewZooms(value) {
+    return Object.keys(SURFACE_ZOOM_DEFAULTS).reduce((zoomMap, key) => {
+      zoomMap[key] = normalizeSurfaceZoom(value?.[key] || SURFACE_ZOOM_DEFAULTS[key]);
+      return zoomMap;
+    }, {});
+  }
+
   function getStatuses() {
     state.statuses = normalizeStatusList(state.statuses, state.tasks);
     return state.statuses;
+  }
+
+  function getSurfaceZoom(view) {
+    state.viewZooms = normalizeViewZooms(state.viewZooms || {});
+    return normalizeSurfaceZoom(state.viewZooms[view]);
   }
 
   function bindGlobalEvents() {
@@ -1380,6 +1405,7 @@
   }
 
   function renderKanbanView() {
+    const zoom = getSurfaceZoom('kanban');
     setHeader(
       '칸반 보기',
       '컬럼을 직접 추가/삭제할 수 있고, 카드를 다른 컬럼으로 드래그하면 상태값이 전체 보기에 반영됩니다.',
@@ -1388,7 +1414,7 @@
     const statuses = getStatuses();
     els.viewRoot.innerHTML = `
       ${metricsStripHtml()}
-      <div class="kanban-board">
+      <div class="kanban-board zoomable-surface" data-pinch-zoom-view="kanban" style="zoom:${zoom}">
         ${statuses.map((status) => {
           const tasks = state.tasks.filter((t) => t.status === status);
           const canDelete = statuses.length > 1 && canDeleteStatus(status);
@@ -1411,6 +1437,7 @@
       </div>
     `;
     bindKanbanDrag();
+    bindSurfacePinchZoom($('.kanban-board', els.viewRoot), 'kanban');
   }
 
   function kanbanCard(t) {
@@ -1434,6 +1461,7 @@
     $$('[data-drag-task]', els.viewRoot).forEach((card) => {
       card.addEventListener('pointerdown', (event) => {
         if (event.button !== 0) return;
+        if (event.pointerType === 'touch') event.preventDefault();
         const start = { x: event.clientX, y: event.clientY };
         const id = card.dataset.dragTask;
         let moved = false;
@@ -1441,7 +1469,14 @@
         let dragGhost = null;
         let cardRect = null;
         let pointerOffset = { x: 0, y: 0 };
-        card.setPointerCapture?.(event.pointerId);
+        let lastPointer = null;
+        let autoScrollTimer = null;
+        let previousBoardSnapType = null;
+        try {
+          card.setPointerCapture?.(event.pointerId);
+        } catch (captureError) {
+          // Synthetic touch tests may not register an active pointer before this call.
+        }
 
         const setDropColumn = (column) => {
           if (activeColumn === column) return;
@@ -1467,19 +1502,49 @@
           document.body.appendChild(dragGhost);
           card.classList.add('drag-source');
           document.body.classList.add('kanban-drag-active');
+          const board = $('.kanban-board', els.viewRoot);
+          if (board && previousBoardSnapType === null) {
+            previousBoardSnapType = board.style.scrollSnapType || '';
+            board.style.scrollSnapType = 'none';
+          }
+          if (!autoScrollTimer) {
+            autoScrollTimer = setInterval(() => {
+              if (lastPointer) autoScrollKanbanBoard(lastPointer);
+            }, 40);
+          }
         };
         const moveDragGhost = (moveEvent) => {
           if (!dragGhost) return;
           dragGhost.style.left = `${moveEvent.clientX - pointerOffset.x}px`;
           dragGhost.style.top = `${moveEvent.clientY - pointerOffset.y}px`;
         };
+        const autoScrollKanbanBoard = (moveEvent) => {
+          const board = $('.kanban-board', els.viewRoot);
+          if (!board) return;
+          const rootRect = els.viewRoot?.getBoundingClientRect();
+          const rect = rootRect || board.getBoundingClientRect();
+          const viewportWidth = window.visualViewport?.width || document.documentElement.clientWidth || window.innerWidth || rect.right;
+          const left = Math.max(0, rect.left);
+          const right = Math.min(viewportWidth, rect.right);
+          const edge = 56;
+          const maxStep = 28;
+          if (moveEvent.clientX > right - edge) {
+            const intensity = Math.min(1, (moveEvent.clientX - (right - edge)) / edge);
+            board.scrollLeft += Math.max(8, maxStep * intensity);
+          } else if (moveEvent.clientX < left + edge) {
+            const intensity = Math.min(1, ((left + edge) - moveEvent.clientX) / edge);
+            board.scrollLeft -= Math.max(8, maxStep * intensity);
+          }
+        };
         const onMove = (moveEvent) => {
+          lastPointer = { clientX: moveEvent.clientX, clientY: moveEvent.clientY };
           const dx = moveEvent.clientX - start.x;
           const dy = moveEvent.clientY - start.y;
           if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
           if (!moved) return;
           moveEvent.preventDefault();
           ensureDragGhost();
+          autoScrollKanbanBoard(moveEvent);
           moveDragGhost(moveEvent);
           dragGhost.style.pointerEvents = 'none';
           setDropColumn(document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest('[data-drop-status]'));
@@ -1489,24 +1554,157 @@
           document.removeEventListener('pointermove', onMove);
           document.removeEventListener('pointerup', onUp);
           document.removeEventListener('pointercancel', onUp);
-          card.releasePointerCapture?.(event.pointerId);
+          if (autoScrollTimer) {
+            clearInterval(autoScrollTimer);
+            autoScrollTimer = null;
+          }
+          try {
+            card.releasePointerCapture?.(event.pointerId);
+          } catch (captureError) {
+            // Pointer capture may already be released on touch cancel or synthetic events.
+          }
           card.classList.remove('drag-source');
           dragGhost?.remove();
           dragGhost = null;
           document.body.classList.remove('kanban-drag-active');
+          const board = $('.kanban-board', els.viewRoot);
+          if (board && previousBoardSnapType !== null) {
+            board.style.scrollSnapType = previousBoardSnapType;
+          }
           activeColumn?.classList.remove('drag-over');
           if (moved) {
             kanbanDragSuppressClick = true;
             setTimeout(() => { kanbanDragSuppressClick = false; }, 0);
             const targetColumn = document.elementFromPoint(upEvent.clientX, upEvent.clientY)?.closest('[data-drop-status]') || activeColumn;
             const nextStatus = targetColumn?.dataset.dropStatus;
-            if (nextStatus) updateTask(id, 'status', nextStatus);
+            if (nextStatus) {
+              const kanbanViewport = captureKanbanViewport();
+              updateTask(id, 'status', nextStatus);
+              restoreKanbanViewport(kanbanViewport);
+            }
           }
         };
         document.addEventListener('pointermove', onMove);
         document.addEventListener('pointerup', onUp);
         document.addEventListener('pointercancel', onUp);
       });
+    });
+  }
+
+  function captureKanbanViewport() {
+    const board = $('.kanban-board', els.viewRoot);
+    return {
+      rootLeft: els.viewRoot?.scrollLeft || 0,
+      rootTop: els.viewRoot?.scrollTop || 0,
+      boardLeft: board?.scrollLeft || 0,
+      boardTop: board?.scrollTop || 0,
+      columnScrolls: $$('[data-drop-status]', els.viewRoot).map((column) => ({
+        status: column.dataset.dropStatus,
+        top: $('.kanban-cards', column)?.scrollTop || 0
+      }))
+    };
+  }
+
+  function restoreKanbanViewport(snapshot) {
+    if (!snapshot) return;
+    requestAnimationFrame(() => {
+      if (els.viewRoot) {
+        els.viewRoot.scrollLeft = snapshot.rootLeft;
+        els.viewRoot.scrollTop = snapshot.rootTop;
+      }
+      const board = $('.kanban-board', els.viewRoot);
+      if (board) {
+        board.scrollLeft = snapshot.boardLeft;
+        board.scrollTop = snapshot.boardTop;
+      }
+      snapshot.columnScrolls?.forEach((item) => {
+        const column = $$('[data-drop-status]', els.viewRoot).find((candidate) => candidate.dataset.dropStatus === item.status);
+        const cards = column && $('.kanban-cards', column);
+        if (cards) cards.scrollTop = item.top;
+      });
+    });
+  }
+
+  function touchDistance(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.hypot(dx, dy);
+  }
+
+  function touchCenter(touches) {
+    return {
+      clientX: (touches[0].clientX + touches[1].clientX) / 2,
+      clientY: (touches[0].clientY + touches[1].clientY) / 2
+    };
+  }
+
+  function bindSurfacePinchZoom(target, view, customApply) {
+    if (!target) return;
+    let startDistance = 0;
+    let startZoom = 1;
+    let lastZoom = 1;
+    let pinching = false;
+
+    target.addEventListener('touchstart', (event) => {
+      if (event.touches.length !== 2) return;
+      pinching = true;
+      startDistance = touchDistance(event.touches);
+      startZoom = view === 'mindmap' ? normalizeMindZoom(state.mindZoom) : getSurfaceZoom(view);
+      lastZoom = startZoom;
+      target.classList.add('pinching');
+    }, { passive: true });
+
+    target.addEventListener('touchmove', (event) => {
+      if (!pinching || event.touches.length !== 2 || !startDistance) return;
+      event.preventDefault();
+      const scale = touchDistance(event.touches) / startDistance;
+      const center = touchCenter(event.touches);
+      const next = view === 'mindmap'
+        ? normalizeMindZoom(startZoom * scale)
+        : normalizeSurfaceZoom(startZoom * scale);
+      if (Math.abs(next - lastZoom) < 0.01) return;
+      lastZoom = next;
+      if (customApply) {
+        customApply(next, { ...center, saveImmediately: false });
+      } else {
+        applySurfaceZoom(view, next, { ...center, saveImmediately: false });
+      }
+    }, { passive: false });
+
+    const finishPinch = () => {
+      if (!pinching) return;
+      pinching = false;
+      startDistance = 0;
+      target.classList.remove('pinching');
+      queueBoardSettingsSave(true);
+    };
+    target.addEventListener('touchend', finishPinch, { passive: true });
+    target.addEventListener('touchcancel', finishPinch, { passive: true });
+  }
+
+  function applySurfaceZoom(view, nextZoom, options = {}) {
+    const oldZoom = getSurfaceZoom(view);
+    const normalizedNext = normalizeSurfaceZoom(nextZoom);
+    if (normalizedNext === oldZoom) return;
+    const surface = $(`[data-pinch-zoom-view="${view}"]`, els.viewRoot);
+    const scroller = view === 'kanban' ? surface : els.viewRoot;
+    const rect = scroller?.getBoundingClientRect();
+    const scrollLeft = scroller?.scrollLeft || 0;
+    const scrollTop = scroller?.scrollTop || 0;
+    const anchorX = rect && Number.isFinite(options.clientX) ? options.clientX - rect.left : (rect?.width || 0) / 2;
+    const anchorY = rect && Number.isFinite(options.clientY) ? options.clientY - rect.top : (rect?.height || 0) / 2;
+    const contentX = scrollLeft + anchorX;
+    const contentY = scrollTop + anchorY;
+    const ratio = normalizedNext / (oldZoom || 1);
+    state.viewZooms = normalizeViewZooms(state.viewZooms || {});
+    state.viewZooms[view] = normalizedNext;
+    scheduleSave();
+    saveLocalBoardSettings();
+    if (surface) surface.style.zoom = normalizedNext;
+    requestAnimationFrame(() => {
+      if (!scroller) return;
+      scroller.scrollLeft = Math.max(0, contentX * ratio - anchorX);
+      scroller.scrollTop = Math.max(0, contentY * ratio - anchorY);
     });
   }
 
@@ -1592,7 +1790,7 @@
       '노드를 드래그해서 위치를 조정할 수 있습니다. 노드를 클릭하면 상세 정보를 수정합니다.',
       `<div class="mindmap-toolbar" aria-label="마인드맵 확대 축소">
         <button class="icon-control" data-mind-zoom="out" title="축소" aria-label="축소">-</button>
-        <span>${Math.round(zoom * 100)}%</span>
+        <span data-mind-zoom-label>${Math.round(zoom * 100)}%</span>
         <button class="icon-control" data-mind-zoom="in" title="확대" aria-label="확대">+</button>
         <button class="ghost-btn compact-btn" data-mind-zoom="reset">100%</button>
       </div><button class="ghost-btn" data-action="reset-mindmap-layout">자동정렬 초기화</button><button class="primary-btn" data-action="add-task">업무 추가</button>`
@@ -1624,7 +1822,7 @@
     els.viewRoot.innerHTML = `
       ${metricsStripHtml()}
       <div class="mindmap-shell" data-mindmap-shell>
-        <svg class="mindmap-svg" viewBox="${viewBox}" width="${Math.round(svgWidth * zoom)}" height="${Math.round(svgHeight * zoom)}">
+        <svg class="mindmap-svg" viewBox="${viewBox}" width="${Math.round(svgWidth * zoom)}" height="${Math.round(svgHeight * zoom)}" data-base-width="${svgWidth}" data-base-height="${svgHeight}">
           <g class="mind-links-layer">${links.join('')}</g>
           <g class="mind-nodes-layer">${nodes.join('')}</g>
         </svg>
@@ -1857,6 +2055,7 @@
         document.addEventListener('pointercancel', onUp);
       });
     });
+    bindSurfacePinchZoom(shell, 'mindmap', applyMindZoom);
   }
 
   function setMindZoom(action) {
@@ -1874,18 +2073,28 @@
     const normalizedNext = normalizeMindZoom(nextZoom);
     if (normalizedNext === oldZoom) return;
     const shell = $('[data-mindmap-shell]', els.viewRoot);
+    const svg = $('.mindmap-svg', els.viewRoot);
     const rect = shell?.getBoundingClientRect();
+    const baseWidth = Number(svg?.dataset.baseWidth);
+    const baseHeight = Number(svg?.dataset.baseHeight);
     const scrollLeft = shell?.scrollLeft || 0;
     const scrollTop = shell?.scrollTop || 0;
-    const anchorX = rect && Number.isFinite(options.clientX) ? options.clientX - rect.left : 0;
-    const anchorY = rect && Number.isFinite(options.clientY) ? options.clientY - rect.top : 0;
+    const anchorX = rect && Number.isFinite(options.clientX) ? options.clientX - rect.left : (rect?.width || 0) / 2;
+    const anchorY = rect && Number.isFinite(options.clientY) ? options.clientY - rect.top : (rect?.height || 0) / 2;
     const contentX = scrollLeft + anchorX;
     const contentY = scrollTop + anchorY;
     const ratio = normalizedNext / (oldZoom || 1);
     state.mindZoom = normalizedNext;
     scheduleSave();
     queueBoardSettingsSave(options.saveImmediately !== false);
-    renderCurrentView();
+    const label = $('[data-mind-zoom-label]');
+    if (label) label.textContent = `${Math.round(normalizedNext * 100)}%`;
+    if (svg && Number.isFinite(baseWidth) && Number.isFinite(baseHeight)) {
+      svg.setAttribute('width', String(Math.round(baseWidth * normalizedNext)));
+      svg.setAttribute('height', String(Math.round(baseHeight * normalizedNext)));
+    } else {
+      renderCurrentView();
+    }
     requestAnimationFrame(() => {
       const nextShell = $('[data-mindmap-shell]', els.viewRoot);
       if (!nextShell) return;
@@ -1929,6 +2138,7 @@
   }
 
   function renderTimelineView() {
+    const zoom = getSurfaceZoom('timeline');
     setHeader(
       '타임라인 보기',
       '시작일/마감일이 있는 업무가 자동으로 막대로 표시됩니다. 막대를 클릭해 날짜를 수정하면 다른 보기에도 반영됩니다.',
@@ -1953,7 +2163,7 @@
 
     els.viewRoot.innerHTML = `
       ${metricsStripHtml(datedTasks)}
-      <div class="timeline-wrap timeline-daily">
+      <div class="timeline-wrap timeline-daily zoomable-surface" data-pinch-zoom-view="timeline" style="zoom:${zoom}">
         <div class="timeline-left">
           <div class="timeline-head">업무명</div>
           ${datedTasks.map((t) => `<div class="timeline-label ${taskHealthClass(t)}" title="${escapeAttr(t.title)}"><span>${escapeHtml(t.title)}</span>${isTaskOverdue(t) ? '<em>지남</em>' : ''}</div>`).join('')}
@@ -1972,6 +2182,7 @@
         </div>
       ` : ''}
     `;
+    bindSurfacePinchZoom($('.timeline-wrap', els.viewRoot), 'timeline');
   }
 
   function renderTimelineRow(t, min, totalDays) {
@@ -2023,6 +2234,7 @@
   }
 
   function renderCalendarView() {
+    const zoom = getSurfaceZoom('calendar');
     setHeader(
       '캘린더 보기',
       '같은 업무는 날짜별로 반복하지 않고 시작일부터 종료일까지 이어지는 막대로 표시합니다.',
@@ -2052,7 +2264,7 @@
           <button class="ghost-btn" id="nextMonthBtn">다음 달</button>
         </div>
       </div>
-        <div class="calendar-board">
+        <div class="calendar-board zoomable-surface" data-pinch-zoom-view="calendar" style="zoom:${zoom}">
           <div class="calendar-weekdays">
           ${weekdayLabels.map((w) => `<div class="weekday ${w.className}">${w.label}</div>`).join('')}
           </div>
@@ -2069,6 +2281,7 @@
       scheduleSave();
       renderCurrentView();
     });
+    bindSurfacePinchZoom($('.calendar-board', els.viewRoot), 'calendar');
   }
 
   function renderCalendarWeek(week, cursor) {
