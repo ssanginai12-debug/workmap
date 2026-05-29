@@ -135,7 +135,7 @@
     if (CLOUD_ENABLED) {
       await initCloudMode();
     } else {
-      render();
+      renderPreservingViewport();
     }
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
       navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -210,7 +210,7 @@
       await subscribeToBoardRealtime();
       renderCloudStatus('Cloud 동기화');
       els.saveStatus.textContent = '동기화됨';
-      render();
+      renderPreservingViewport();
     } catch (err) {
       console.error(err);
       setAuthMessage(`보드 로딩 오류: ${err.message || err}`, true);
@@ -517,6 +517,8 @@
         if (idx >= 0) state.tasks[idx] = next;
         else state.tasks.push(next);
       }
+      renderPreservingViewport();
+      return;
       els.saveStatus.textContent = '동기화됨';
       render();
     } finally {
@@ -538,7 +540,7 @@
       state.viewZooms = normalizeViewZooms(settings.viewZooms || state.viewZooms);
       shouldRender = true;
     }
-    if (shouldRender) render();
+    if (shouldRender) renderPreservingViewport();
   }
 
   function handleMemberRealtime(payload) {
@@ -1158,6 +1160,57 @@
     if (els.projectListModal && !els.projectListModal.hidden) renderProjectListModal();
   }
 
+  function renderPreservingViewport() {
+    const snapshot = captureCurrentViewport();
+    render();
+    restoreCurrentViewport(snapshot);
+  }
+
+  function captureCurrentViewport() {
+    if (state.view === 'kanban') {
+      return { view: 'kanban', snapshot: captureKanbanViewport() };
+    }
+    if (state.view === 'mindmap') {
+      const shell = $('[data-mindmap-shell]', els.viewRoot);
+      return {
+        view: 'mindmap',
+        left: shell?.scrollLeft || 0,
+        top: shell?.scrollTop || 0
+      };
+    }
+    return {
+      view: state.view,
+      left: els.viewRoot?.scrollLeft || 0,
+      top: els.viewRoot?.scrollTop || 0
+    };
+  }
+
+  function restoreCurrentViewport(snapshot) {
+    if (!snapshot || snapshot.view !== state.view) return;
+    if (snapshot.view === 'kanban') {
+      restoreKanbanViewport(snapshot.snapshot);
+      return;
+    }
+    const apply = () => {
+      if (snapshot.view === 'mindmap') {
+        const shell = $('[data-mindmap-shell]', els.viewRoot);
+        if (!shell) return;
+        shell.scrollLeft = snapshot.left;
+        shell.scrollTop = snapshot.top;
+        return;
+      }
+      if (!els.viewRoot) return;
+      els.viewRoot.scrollLeft = snapshot.left;
+      els.viewRoot.scrollTop = snapshot.top;
+    };
+    requestAnimationFrame(() => {
+      apply();
+      requestAnimationFrame(apply);
+      setTimeout(apply, 120);
+      setTimeout(apply, 420);
+    });
+  }
+
   function renderTableSelect() {
     if (!els.tableSelect) return;
     const options = CLOUD_ENABLED && currentUser
@@ -1519,6 +1572,7 @@
         }
         const start = { x: event.clientX, y: event.clientY };
         const id = card.dataset.dragTask;
+        const dragStartViewport = captureKanbanViewport();
         let moved = false;
         let cancelKanbanCommit = false;
         let dragArmed = !isTouchPointer;
@@ -1662,8 +1716,8 @@
           document.body.classList.remove('kanban-drag-active');
           const board = $('.kanban-board', els.viewRoot);
           if (board && previousBoardSnapType !== null) {
-          const boardZoom = Number(board.style.zoom || getComputedStyle(board).zoom || 1);
-          board.style.scrollSnapType = Math.abs(boardZoom - 1) > 0.01 ? 'none' : previousBoardSnapType;
+            const boardZoom = Number(board.style.zoom || getComputedStyle(board).zoom || 1);
+            board.style.scrollSnapType = Math.abs(boardZoom - 1) > 0.01 || isMobileSurfaceZoomEnabled() ? 'none' : previousBoardSnapType;
           }
           activeColumn?.classList.remove('drag-over');
           if (moved && !cancelKanbanCommit) {
@@ -1671,11 +1725,14 @@
             setTimeout(() => { kanbanDragSuppressClick = false; }, 0);
             const targetColumn = document.elementFromPoint(upEvent.clientX, upEvent.clientY)?.closest('[data-drop-status]') || activeColumn;
             const nextStatus = targetColumn?.dataset.dropStatus;
+            const kanbanViewport = captureKanbanViewport();
+            kanbanViewport.rootLeft = Math.max(kanbanViewport.rootLeft, dragStartViewport.rootLeft);
+            kanbanViewport.boardLeft = Math.max(kanbanViewport.boardLeft, dragStartViewport.boardLeft);
             if (nextStatus) {
-              const kanbanViewport = captureKanbanViewport();
-              updateTask(id, 'status', nextStatus);
-              restoreKanbanViewport(kanbanViewport);
+              updateTask(id, 'status', nextStatus, false);
+              renderCurrentView();
             }
+            restoreKanbanViewport(kanbanViewport);
           }
         };
         document.addEventListener('pointermove', onMove);
@@ -1746,6 +1803,32 @@
           nextBoard.style.scrollSnapType = Math.abs(boardZoom - 1) > 0.01 || isMobileSurfaceZoomEnabled() ? 'none' : previousSnap;
         }
       });
+      setTimeout(() => {
+        const delayedBoard = $('.kanban-board', els.viewRoot);
+        if (els.viewRoot) {
+          els.viewRoot.scrollLeft = snapshot.rootLeft;
+          els.viewRoot.scrollTop = snapshot.rootTop;
+        }
+        if (delayedBoard) {
+          delayedBoard.scrollLeft = snapshot.boardLeft;
+          delayedBoard.scrollTop = snapshot.boardTop;
+          const boardZoom = Number(snapshot.boardZoom || delayedBoard.style.zoom || getComputedStyle(delayedBoard).zoom || 1);
+          delayedBoard.style.scrollSnapType = Math.abs(boardZoom - 1) > 0.01 || isMobileSurfaceZoomEnabled() ? 'none' : previousSnap;
+        }
+      }, 160);
+      setTimeout(() => {
+        const delayedBoard = $('.kanban-board', els.viewRoot);
+        if (els.viewRoot) {
+          els.viewRoot.scrollLeft = snapshot.rootLeft;
+          els.viewRoot.scrollTop = snapshot.rootTop;
+        }
+        if (delayedBoard) {
+          delayedBoard.scrollLeft = snapshot.boardLeft;
+          delayedBoard.scrollTop = snapshot.boardTop;
+          const boardZoom = Number(snapshot.boardZoom || delayedBoard.style.zoom || getComputedStyle(delayedBoard).zoom || 1);
+          delayedBoard.style.scrollSnapType = Math.abs(boardZoom - 1) > 0.01 || isMobileSurfaceZoomEnabled() ? 'none' : previousSnap;
+        }
+      }, 420);
     });
   }
 
@@ -2259,14 +2342,10 @@
             setTimeout(() => { mindDragSuppressClick = false; }, 0);
             state.mindPositions = { ...(state.mindPositions || {}) };
             state.mindPositions[id] = { x: Math.round(latest.x), y: Math.round(latest.y) };
+            const mindViewport = { view: 'mindmap', left: dragScroll.left, top: dragScroll.top };
             queueBoardSettingsSave(true);
             renderCurrentView();
-            requestAnimationFrame(() => {
-              const nextShell = $('[data-mindmap-shell]', els.viewRoot);
-              if (!nextShell) return;
-              nextShell.scrollLeft = dragScroll.left;
-              nextShell.scrollTop = dragScroll.top;
-            });
+            restoreCurrentViewport(mindViewport);
           }
         };
         document.addEventListener('pointermove', onMove);

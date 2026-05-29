@@ -188,7 +188,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   gap: 12px;
 }
 .view-header p { margin: 0; color: var(--muted); font-size: 13px; }
-.view-root { padding: 18px; min-height: 520px; overflow: auto; scrollbar-gutter: stable; }
+.view-root { padding: 18px; min-height: 520px; overflow: auto; scrollbar-gutter: stable; overflow-anchor: none; }
 .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .view-metrics {
   display: grid;
@@ -342,7 +342,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .badge.red { background: var(--red-weak); color: #bd333c; border-color: #ffd3d7; }
 .badge.gray { background: #f2f4f8; color: #596273; border-color: #e5e9f2; }
 
-.kanban-board { display: flex; gap: 14px; min-height: 540px; overflow-x: auto; padding-bottom: 14px; }
+.kanban-board { display: flex; gap: 14px; min-height: 540px; overflow-x: auto; padding-bottom: 14px; overflow-anchor: none; }
 .kanban-column {
   flex: 0 0 280px;
   background: #f8faff;
@@ -431,6 +431,7 @@ body.kanban-drag-active {
   overflow: scroll;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
+  overflow-anchor: none;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
   touch-action: none;
 }
