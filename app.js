@@ -14,6 +14,8 @@
   const MOBILE_MIND_NODE_DRAG_GAIN = 1.8;
   const CLOUD_INVITE_TIMEOUT_MS = 4000;
   const CLOUD_QUERY_TIMEOUT_MS = 9000;
+  const AUTH_SESSION_RECHECK_DELAY_MS = 900;
+  const AUTH_SESSION_RECHECK_TRIES = 3;
   const CLOUD_CONFIG = window.WORKMAP_SUPABASE || {};
   const CLOUD_ENABLED = Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.anonKey && window.supabase);
   const supabaseClient = CLOUD_ENABLED ? window.supabase.createClient(CLOUD_CONFIG.url, CLOUD_CONFIG.anonKey) : null;
@@ -89,6 +91,8 @@
   let boardTitleSaveTimer = null;
   let boardSettingsSaveTimer = null;
   let boardSettingsColumnMissing = false;
+  let authSessionRecoveryTimer = null;
+  let userInitiatedSignOut = false;
   let mindDragSuppressClick = false;
   let kanbanDragSuppressClick = false;
   let activeTouchCount = 0;
@@ -159,19 +163,66 @@
     els.signOutBtn?.addEventListener('click', signOut);
     supabaseClient.auth.onAuthStateChange(async (_event, session) => {
       if (!session) {
-        currentUser = null;
-        currentBoardId = null;
-        if (realtimeChannel) supabaseClient.removeChannel(realtimeChannel);
-        realtimeChannel = null;
-        renderCloudStatus();
-        showAuthScreen(true);
+        handleMissingAuthSession();
         return;
       }
+      clearAuthSessionRecovery();
+      userInitiatedSignOut = false;
       if (!currentUser || currentUser.id !== session.user.id) {
         currentUser = session.user;
         await bootSignedInUser();
       }
     });
+  }
+
+  function clearAuthSessionRecovery() {
+    if (authSessionRecoveryTimer) {
+      clearTimeout(authSessionRecoveryTimer);
+      authSessionRecoveryTimer = null;
+    }
+  }
+
+  function finishSignedOutState() {
+    clearAuthSessionRecovery();
+    currentUser = null;
+    currentBoardId = null;
+    if (realtimeChannel) supabaseClient.removeChannel(realtimeChannel);
+    realtimeChannel = null;
+    renderCloudStatus();
+    showAuthScreen(true);
+  }
+
+  function handleMissingAuthSession() {
+    if (!currentUser || userInitiatedSignOut) {
+      finishSignedOutState();
+      userInitiatedSignOut = false;
+      return;
+    }
+    clearAuthSessionRecovery();
+    renderCloudStatus('세션 확인 중…');
+    els.saveStatus.textContent = '세션 확인 중…';
+    authSessionRecoveryTimer = setTimeout(confirmAuthSessionStillMissing, AUTH_SESSION_RECHECK_DELAY_MS);
+  }
+
+  async function confirmAuthSessionStillMissing() {
+    authSessionRecoveryTimer = null;
+    for (let attempt = 0; attempt < AUTH_SESSION_RECHECK_TRIES; attempt += 1) {
+      try {
+        const { data, error } = await supabaseClient.auth.getSession();
+        if (!error && data?.session?.user) {
+          currentUser = data.session.user;
+          showAuthScreen(false);
+          renderCloudStatus('Cloud 동기화');
+          els.saveStatus.textContent = '세션 복구됨';
+          if (!currentBoardId) await bootSignedInUser();
+          return;
+        }
+      } catch (sessionError) {
+        console.warn('세션 재확인 실패:', sessionError);
+      }
+      await new Promise((resolve) => setTimeout(resolve, AUTH_SESSION_RECHECK_DELAY_MS));
+    }
+    finishSignedOutState();
   }
 
   async function initCloudMode() {
@@ -194,6 +245,7 @@
 
   async function bootSignedInUser() {
     try {
+      clearAuthSessionRecovery();
       showAuthScreen(false);
       renderCloudStatus('연결 중…');
       renderBootLoadingState();
@@ -305,6 +357,8 @@
   }
 
   async function signOut() {
+    userInitiatedSignOut = true;
+    clearAuthSessionRecovery();
     await supabaseClient.auth.signOut();
   }
 
