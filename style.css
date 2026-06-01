@@ -397,6 +397,11 @@ body.kanban-drag-active {
   cursor: grabbing;
   user-select: none;
 }
+body.mind-drag-active {
+  cursor: grabbing;
+  user-select: none;
+  overscroll-behavior: contain;
+}
 .kanban-card.is-complete { opacity: 0.74; }
 .kanban-card.has-date-error { background: #fff8f8; }
 .kanban-card.is-overdue { box-shadow: inset 0 0 0 1px #ffd3d7, 0 8px 18px rgba(25,35,65,0.06); }

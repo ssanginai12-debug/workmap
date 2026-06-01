@@ -1,4 +1,4 @@
-const CACHE_NAME = 'workmap-mvp-v22-drag-viewport-lock';
+const CACHE_NAME = 'workmap-mvp-v25-drawer-focus-lock';
 const FILES = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './상상인로고.png'];
 
 self.addEventListener('install', (event) => {

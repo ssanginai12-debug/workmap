@@ -11,6 +11,7 @@
   const DELETE_CATEGORY_VALUE = '__workmap_delete_category__';
   const DELETE_STATUS_VALUE = '__workmap_delete_status__';
   const SURFACE_ZOOM_DEFAULTS = { kanban: 1, timeline: 1, calendar: 1 };
+  const MOBILE_MIND_NODE_DRAG_GAIN = 1.8;
   const CLOUD_INVITE_TIMEOUT_MS = 4000;
   const CLOUD_QUERY_TIMEOUT_MS = 9000;
   const CLOUD_CONFIG = window.WORKMAP_SUPABASE || {};
@@ -512,7 +513,7 @@
       if (payload.eventType === 'DELETE') {
         state.tasks = state.tasks.filter((t) => t.id !== payload.old.id);
       } else {
-        const next = taskFromRow(payload.new);
+        const next = protectActiveDrawerEdit(taskFromRow(payload.new));
         const idx = state.tasks.findIndex((t) => t.id === next.id);
         if (idx >= 0) state.tasks[idx] = next;
         else state.tasks.push(next);
@@ -1156,7 +1157,7 @@
     renderSummary();
     renderCategoryList();
     renderCurrentView();
-    renderDrawer();
+    if (!isEditingSelectedDrawerField()) renderDrawer();
     if (els.projectListModal && !els.projectListModal.hidden) renderProjectListModal();
   }
 
@@ -2171,13 +2172,14 @@
       width: Number(node.dataset.mindWidth) || 140,
       height: Number(node.dataset.mindHeight) || 46
     }]));
-    const svgPoint = (event) => {
+    const clientToSvgPoint = (clientX, clientY) => {
       const point = svg.createSVGPoint();
-      point.x = event.clientX;
-      point.y = event.clientY;
+      point.x = clientX;
+      point.y = clientY;
       const matrix = svg.getScreenCTM();
-      return matrix ? point.matrixTransform(matrix.inverse()) : { x: event.clientX, y: event.clientY };
+      return matrix ? point.matrixTransform(matrix.inverse()) : { x: clientX, y: clientY };
     };
+    const svgPoint = (event) => clientToSvgPoint(event.clientX, event.clientY);
     const refreshLinks = () => {
       $$('[data-link-parent]', svg).forEach((link) => {
         const parent = nodeState.get(link.dataset.linkParent);
@@ -2271,6 +2273,7 @@
         if (isTouchPointer) {
           touchHoldTimer = setTimeout(() => {
             dragArmed = true;
+            document.body.classList.add('mind-drag-active');
             capturePointer();
           }, 220);
         } else {
@@ -2284,26 +2287,27 @@
           onUp();
         };
 
-        const onMove = (moveEvent) => {
-          if (moveEvent.pointerType === 'touch' && isPinchGestureActive()) {
+        const moveNodeToClient = (clientX, clientY, preventNativeScroll = false) => {
+          if (isTouchPointer && isPinchGestureActive()) {
             cancelMindCommit = true;
             onUp();
             return;
           }
-          const now = svgPoint(moveEvent);
+          const now = clientToSvgPoint(clientX, clientY);
           const dx = now.x - start.x;
           const dy = now.y - start.y;
+          const dragGain = isTouchPointer ? MOBILE_MIND_NODE_DRAG_GAIN : 1;
           if (isTouchPointer && !dragArmed) {
-            if (Math.abs(moveEvent.clientX - event.clientX) > 8 || Math.abs(moveEvent.clientY - event.clientY) > 8) {
+            if (Math.abs(clientX - event.clientX) > 8 || Math.abs(clientY - event.clientY) > 8) {
               cancelMindCommit = true;
               onUp();
             }
             return;
           }
-          moveEvent.preventDefault();
+          if (preventNativeScroll) document.body.classList.add('mind-drag-active');
           if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
           node.classList.add('dragging');
-          latest = { x: original.x + dx, y: original.y + dy };
+          latest = { x: original.x + dx * dragGain, y: original.y + dy * dragGain };
           nodeState.set(id, { x: latest.x, y: latest.y, width, height });
           node.setAttribute('transform', `translate(${latest.x - width / 2},${latest.y - height / 2})`);
           refreshLinks();
@@ -2312,16 +2316,35 @@
             shell.scrollTop = dragScroll.top;
           }
         };
+        const onMove = (moveEvent) => {
+          moveEvent.preventDefault();
+          moveNodeToClient(moveEvent.clientX, moveEvent.clientY, true);
+        };
+        const onNodeTouchMove = (touchEvent) => {
+          if (!isTouchPointer) return;
+          if (touchEvent.touches.length !== 1) {
+            onTouchPinchCancel(touchEvent);
+            return;
+          }
+          const touch = touchEvent.touches[0];
+          if (dragArmed) touchEvent.preventDefault();
+          moveNodeToClient(touch.clientX, touch.clientY, dragArmed);
+        };
+        const onNodeTouchEnd = () => onUp();
         const onUp = () => {
           document.removeEventListener('pointermove', onMove);
           document.removeEventListener('pointerup', onUp);
           document.removeEventListener('pointercancel', onUp);
           document.removeEventListener('touchstart', onTouchPinchCancel, true);
           document.removeEventListener('touchmove', onTouchPinchCancel, true);
+          document.removeEventListener('touchmove', onNodeTouchMove, true);
+          document.removeEventListener('touchend', onNodeTouchEnd, true);
+          document.removeEventListener('touchcancel', onNodeTouchEnd, true);
           if (touchHoldTimer) {
             clearTimeout(touchHoldTimer);
             touchHoldTimer = null;
           }
+          document.body.classList.remove('mind-drag-active');
           try {
             node.releasePointerCapture?.(event.pointerId);
           } catch (captureError) {
@@ -2354,6 +2377,9 @@
         if (event.pointerType === 'touch') {
           document.addEventListener('touchstart', onTouchPinchCancel, { capture: true, passive: true });
           document.addEventListener('touchmove', onTouchPinchCancel, { capture: true, passive: true });
+          document.addEventListener('touchmove', onNodeTouchMove, { capture: true, passive: false });
+          document.addEventListener('touchend', onNodeTouchEnd, { capture: true, passive: true });
+          document.addEventListener('touchcancel', onNodeTouchEnd, { capture: true, passive: true });
         }
       });
     });
@@ -2703,6 +2729,27 @@
     selectedTaskId = null;
     els.drawer.classList.remove('open');
     els.drawer.setAttribute('aria-hidden', 'true');
+  }
+
+  function activeDrawerFieldInfo() {
+    const fieldEl = document.activeElement?.closest?.('[data-drawer-field]');
+    if (!fieldEl || !els.drawerBody.contains(fieldEl) || !selectedTaskId) return null;
+    return {
+      taskId: selectedTaskId,
+      field: fieldEl.dataset.drawerField,
+      value: fieldEl.value
+    };
+  }
+
+  function isEditingSelectedDrawerField() {
+    const active = activeDrawerFieldInfo();
+    return Boolean(active && getTask(active.taskId));
+  }
+
+  function protectActiveDrawerEdit(nextTask) {
+    const active = activeDrawerFieldInfo();
+    if (!active || active.taskId !== nextTask.id || !active.field) return nextTask;
+    return { ...nextTask, [active.field]: active.value };
   }
 
   function renderDrawer() {
