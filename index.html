@@ -6,7 +6,7 @@
   <title>업무맵 Cloud MVP - 로그인/초대/DB/실시간 동기화</title>
   <meta name="description" content="프로젝트 하나를 원본으로 마인드맵, 칸반, 타임라인, 캘린더가 자동 동기화되는 웹앱 MVP" />
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=20260723-authfix1" />
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -78,6 +78,7 @@
   </aside>
 
   <div id="modalBackdrop" class="modal-backdrop" hidden></div>
+
   <section id="newTableModal" class="modal compact-modal" hidden aria-modal="true" role="dialog" aria-labelledby="newTableTitle">
     <div class="modal-header">
       <div>
@@ -170,13 +171,30 @@
       <p id="authMessage" class="auth-message"></p>
       <div class="share-note config-note">
         <b>GitHub Pages 사용 가능</b><br>
-        단, GitHub는 정적 파일 호스팅용이고 DB/로그인/실시간 동기화는 Supabase가 담당합니다.
+        단, GitHub는 정적 파일 호스팅이고 DB/로그인/실시간 동기화는 Supabase가 담당합니다.
       </div>
     </div>
   </section>
 
+  <!-- 기존 서비스워커 캐시를 인증 핫픽스 버전으로 한 번만 초기화합니다. -->
+  <script>
+    (() => {
+      const RESET_KEY = 'workmap_authfix_sw_reset_v1';
+      if (!('serviceWorker' in navigator) || localStorage.getItem(RESET_KEY)) return;
+
+      navigator.serviceWorker.getRegistrations()
+        .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+        .catch(() => {})
+        .finally(() => {
+          localStorage.setItem(RESET_KEY, '1');
+          if (navigator.serviceWorker.controller) location.reload();
+        });
+    })();
+  </script>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js"></script>
-  <script src="app.js"></script>
+  <script src="config.js?v=20260723-authfix1"></script>
+  <script src="auth-hotfix.js?v=20260723-authfix1"></script>
+  <script src="app.js?v=20260723-authfix1"></script>
 </body>
 </html>
